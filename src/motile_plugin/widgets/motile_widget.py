@@ -1,4 +1,5 @@
 import logging
+import pyqtgraph        as pg
 
 from motile_toolbox.utils import relabel_segmentation
 from motile_toolbox.visualization import to_napari_tracks_layer
@@ -18,9 +19,9 @@ from motile_plugin.backend.solve import solve
 from .run_editor import RunEditor
 from .run_viewer import RunViewer
 from .runs_list import RunsList
+from .pyqt_graph import LineageTreeWidget
 
 logger = logging.getLogger(__name__)
-
 
 class MotileWidget(QWidget):
     """The main widget for the motile napari plugin. Coordinates sub-widgets
@@ -50,6 +51,9 @@ class MotileWidget(QWidget):
 
         self.run_list_widget = RunsList()
         self.run_list_widget.view_run.connect(self.view_run_napari)
+
+        self.tree_widget = LineageTreeWidget(viewer)
+        self.viewer.window.add_dock_widget(self.tree_widget, name='Lineage Tree', area='bottom')
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -168,6 +172,7 @@ class MotileWidget(QWidget):
         run.output_segmentation = relabel_segmentation(
             run.tracks, run.input_segmentation
         )
+
         return run
 
     def _on_solver_event(self, run: MotileRun, event_data: dict) -> None:
@@ -207,6 +212,7 @@ class MotileWidget(QWidget):
         run.status = "done"
         self.solver_update.emit()
         self.view_run_napari(run)
+        self.tree_widget._update(run.tracks, self.output_seg_layer) # make a call to update pyqtgraph widget
 
     def _title_widget(self) -> QWidget:
         """Create the title and intro paragraph widget, with links to docs
