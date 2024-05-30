@@ -121,6 +121,8 @@ class MotileWidget(QWidget):
         self.edit_run_widget.hide()
         self.view_run_widget.show()
         self.update_napari_layers(run)
+        self.tree_widget._update(run.tracks, self.output_seg_layer) # make a call to update pyqtgraph widget
+
 
     def edit_run(self, run: MotileRun | None):
         """Create or edit a new run in the run editor. Also removes solution layers
