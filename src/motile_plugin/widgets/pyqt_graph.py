@@ -5,6 +5,9 @@ import pyqtgraph        as pg
 import pandas           as pd 
 import copy 
 
+from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtGui import QMouseEvent
+
 from qtpy.QtWidgets     import QHBoxLayout, QWidget
 from typing             import List, Dict
 from napari.utils       import DirectLabelColormap
@@ -145,47 +148,106 @@ class LineageTreeWidget(QWidget):
         main_layout.addWidget(self.tree_widget)
         self.setLayout(main_layout)
 
-    def _on_click(self, item, points: np.ndarray, ev) -> None:
+    def _update(self, tracks:nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> None:
+        """Redraw the pyqtgraph object with the new tracking graph"""
+
+        self.track_df = extract_sorted_tracks(tracks, labels)
+        self.labels = labels
+        self.labels.opacity = 1
+        
+        # add callback to clicking on the labels layer to select cells in the pyqtgraph 
+        @self.labels.mouse_drag_callbacks.append
+        def click(layer, event):
+            if event.type == 'mouse_press':  # Check if the event is a mouse press event
+                position = event.position
+                value = layer.get_value(position,
+                    view_direction=event.view_direction,
+                    dims_displayed=event.dims_displayed,
+                    world=True)
+                node_df = self.track_df[(self.track_df['t'] == int(position[0])) & (self.track_df['track_id'] == int(value))]
+                if not node_df.empty:
+                    modifiers = event.modifiers
+                    if isinstance(event.modifiers, tuple):
+                        # Convert tuple to Qt.KeyboardModifiers
+                        modifiers = self._normalize_modifiers(event.modifiers)
+                    self._select_node(node_df, modifiers)
+                     
+        # create a color dictionary to manipulate opacity of label colors, depending on whether they are currently selected
+        self.label_color_dict = self._create_label_color_dict()    
+
+        pos = []
+        pos_colors = []
+        adj = []
+        adj_colors = []
+
+        for index, node in self.track_df.iterrows():      
+            pos.append([node['x_axis_pos'], node['t']])
+            pos_colors.append(node['color'])               
+            parent = node['parent_id']
+            if parent != 0:
+                parent_df = self.track_df[self.track_df['node_id'] == parent]
+                if not parent_df.empty:
+                    parent_dict = parent_df.iloc[0]
+                    adj.append([parent_dict['index'], node['index']])
+                    adj_colors.append(parent_dict['color'].tolist() + [255, 1])
+            
+        self.pos = np.array(pos)
+        self.adj = np.array(adj)
+        self.symbols = ['o'] * len(pos)
+        self.symbolBrush = np.array(pos_colors)
+        self.pen = np.array(adj_colors)
+        self.size = np.array([8] * len(pos))
+
+        if len(self.pos) > 0:           
+            self.g.setData(pos=self.pos, adj=self.adj, symbols = self.symbols, symbolBrush = self.symbolBrush, size = self.size, pen = self.pen)
+        else: 
+            self.g.scatter.clear()
+
+    def _on_click(self, item, points: np.ndarray, ev: QMouseEvent) -> None:
         """Highlight and print the information about the currently selected node"""
 
-        # if already two objects were selected, reset self.selected so that self.selected does not get a length of 3
-        if len(self.selected) == 2:
-            self.selected = []
         modifiers = ev.modifiers()
-
         clicked_point = points[0]
-        pos = clicked_point.pos()  # Get the coordinates of the clicked point
         index = clicked_point.index()  # Get the index of the clicked point
 
         # find the corresponding element in the list of dicts
         node_df = self.track_df[self.track_df['index'] == index]
         if not node_df.empty:
-            node = node_df.iloc[0].to_dict()  # Convert the filtered result to a dictionary
-            print('User selected node:', node)
+            self._select_node(node_df, modifiers)
+    
+    def _select_node(self, node_df: pd.DataFrame, modifiers: Qt.KeyboardModifiers) -> None:
+        """Handle the current node selection and update visualization in the pyqtgraph and in the labels layer"""
 
-            # Update viewer step
-            step = list(self.viewer.dims.current_step)
-            step[0] = node['t']
-            
-            # Check for 'z' key and update step if exists
-            if 'z' in self.track_df.columns:
-                z = self.track_df.loc[self.track_df['index'] == index, 'z'].values[0]
-                step[1] = int(z)
-            
-            self.viewer.dims.current_step = step
-            self.labels.selected_label = node['track_id']
-            
-            # Update the graph
-            size = self.size.copy()
-            size[index] = 13
+        # if already two objects were selected, reset self.selected so that self.selected does not get a length of 3
+        if len(self.selected) == 2:
+            self.selected = []
 
-            # Handle selection logic
-            if modifiers == pg.QtCore.Qt.ShiftModifier and len(self.selected) == 1:
-                size[self.selected[0]['index']] = 13
-                self.selected.append(node)
-            else: 
-                self.selected = [node]
-                                            
+        # extract the selected node 
+        node = node_df.iloc[0].to_dict()  # Convert the filtered result to a dictionary
+
+        # Update viewer step
+        step = list(self.viewer.dims.current_step)
+        step[0] = node['t']
+        
+        # Check for 'z' key and update step if exists
+        if 'z' in node.keys():
+            z = node['z']
+            step[1] = int(z)
+        
+        self.viewer.dims.current_step = step
+        self.labels.selected_label = node['track_id']
+        
+        # Update the graph
+        size = self.size.copy()
+        size[node['index']] = 13
+
+        # if self.selected already contains another node and the user used SHIFT, add one
+        if modifiers == pg.QtCore.Qt.ShiftModifier and len(self.selected) == 1:
+            size[self.selected[0]['index']] = 13
+            self.selected.append(node)
+        else: 
+            self.selected = [node]
+                                                    
         self.g.setData(pos=self.pos, adj=self.adj, symbolBrush = self.symbolBrush, size = size, symbols = self.symbols, pen = self.pen)
 
         self._update_label_cmap()
@@ -212,39 +274,19 @@ class LineageTreeWidget(QWidget):
             color_dict_rgb[label][-1] = 1 # set opacity to full
         self.labels.colormap = DirectLabelColormap(color_dict=color_dict_rgb)
 
-    def _update(self, tracks:nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> None:
-        """Redraw the pyqtgraph object with the new tracking graph"""
+    def _normalize_modifiers(self, modifiers):
+        """Normalize the event modifiers to Qt.KeyboardModifiers."""
 
-        self.track_df = extract_sorted_tracks(tracks, labels)
-        self.labels = labels
-        self.labels.opacity = 1
-        self.label_color_dict = self._create_label_color_dict()    
-
-        pos = []
-        pos_colors = []
-        adj = []
-        adj_colors = []
-
-        for index, node in self.track_df.iterrows():      
-            pos.append([node['x_axis_pos'], node['t']])
-            pos_colors.append(node['color'])               
-            parent = node['parent_id']
-            if parent != 0:
-                parent_df = self.track_df[self.track_df['node_id'] == parent]
-                if not parent_df.empty:
-                    parent_dict = parent_df.iloc[0]
-                    adj.append([parent_dict['index'], node['index']])
-                    adj_colors.append(parent_dict['color'].tolist() + [255, 1])
-            
-        self.pos = np.array(pos)
-        self.adj = np.array(adj)
-        self.symbols = ['o'] * len(pos)
-        self.symbolBrush = np.array(pos_colors)
-        self.pen = np.array(adj_colors)
-        self.size = np.array([8] * len(pos))
-
-        if len(self.pos) > 0:
-            
-            self.g.setData(pos=self.pos, adj=self.adj, symbols = self.symbols, symbolBrush = self.symbolBrush, size = self.size, pen = self.pen)
-        else: 
-            self.g.scatter.clear()
+        if isinstance(modifiers, tuple):
+            # Convert to Qt.KeyboardModifiers
+            qt_modifiers = Qt.KeyboardModifiers()
+            if 'Shift' in modifiers:
+                qt_modifiers |= Qt.ShiftModifier
+            if 'Ctrl' in modifiers or 'Control' in modifiers:
+                qt_modifiers |= Qt.ControlModifier
+            if 'Alt' in modifiers:
+                qt_modifiers |= Qt.AltModifier
+            if 'Meta' in modifiers:
+                qt_modifiers |= Qt.MetaModifier
+            return qt_modifiers
+        return modifiers
