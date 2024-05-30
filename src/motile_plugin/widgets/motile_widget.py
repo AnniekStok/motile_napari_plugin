@@ -214,7 +214,6 @@ class MotileWidget(QWidget):
         run.status = "done"
         self.solver_update.emit()
         self.view_run_napari(run)
-        self.tree_widget._update(run.tracks, self.output_seg_layer) # make a call to update pyqtgraph widget
 
     def _title_widget(self) -> QWidget:
         """Create the title and intro paragraph widget, with links to docs
