@@ -5,8 +5,8 @@
 [![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/motile-plugin)](https://napari-hub.org/plugins/motile-plugin)
 
 
-Development extended version of the [Motile Napari plugin](https://github.com/funkelab/motile_napari_plugin) aiming to implement interactive visualization and annotation using pyqtgraph
-![](docs/images/motile_pyqtgraph.png)
+Development extended version of the [Motile Napari plugin](https://github.com/funkelab/motile_napari_plugin) aiming to implement interactive visualization and annotation using pyqtgraph. Currently tracks can be viewed in an interactive lineage tree plot, but the user feedback is not yet incorporated in the next solve. 
+![](docs/images/motile_pyqtgraph.gif)
 
 ## Motile Napari Plugin
 
