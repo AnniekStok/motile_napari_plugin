@@ -8,13 +8,16 @@ import copy
 from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtGui import QMouseEvent
 
-from qtpy.QtWidgets     import QHBoxLayout, QWidget
+from qtpy.QtWidgets     import QHBoxLayout, QWidget, QPushButton, QVBoxLayout
 from typing             import List, Dict
 from napari.utils       import DirectLabelColormap
 from matplotlib.colors  import to_rgba
 
 import networkx as nx
 from motile_toolbox.candidate_graph import NodeAttr
+
+from .custom_table_widget  import TableWidget
+
 
 def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> pd.DataFrame:
     """
@@ -134,6 +137,8 @@ class LineageTreeWidget(QWidget):
         super().__init__()
 
         self.viewer = viewer
+
+        # Construct the tree view pyqtgraph widget
         self.tree_widget = pg.PlotWidget()
         self.tree_widget.setTitle('Lineage Tree')
         self.tree_widget.setLabel('left', text='Time Point')
@@ -141,11 +146,30 @@ class LineageTreeWidget(QWidget):
         self.g = pg.GraphItem()
         self.g.scatter.sigClicked.connect(self._on_click)
         self.tree_widget.addItem(self.g)
+
+        # Add buttons to create or destroy connections
+        button_layout = QVBoxLayout()
+        self.connect_btn = QPushButton('Connect')
+        self.connect_btn.clicked.connect(self._trigger_make_connection)
+        self.connect_btn.setEnabled(False)
+        button_layout.addWidget(self.connect_btn)
         
+        self.break_btn = QPushButton('Break')
+        self.break_btn.clicked.connect(self._trigger_break_connection)
+        self.break_btn.setEnabled(False)
+        button_layout.addWidget(self.break_btn)
+
+        # Add a table widget to keep accumulate actions before triggering the solver
+        self.table_widget = TableWidget(data={"Source": [], "Target": [], "Action": [], "Color1": [], "Color2": []}, displayed_columns=["Source", "Target", "Action"])
+        self.table_widget.setMaximumWidth(200)
+        self.table_widget.valueClicked.connect(self._on_table_clicked)
+
         self.selected = []
 
         main_layout = QHBoxLayout()
+        main_layout.addLayout(button_layout)
         main_layout.addWidget(self.tree_widget)
+        main_layout.addWidget(self.table_widget)
         self.setLayout(main_layout)
 
     def _update(self, tracks:nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> None:
@@ -251,6 +275,7 @@ class LineageTreeWidget(QWidget):
         self.g.setData(pos=self.pos, adj=self.adj, symbolBrush = self.symbolBrush, size = size, symbols = self.symbols, pen = self.pen)
 
         self._update_label_cmap()
+        self._update_buttons()
 
     def _create_label_color_dict(self) -> Dict:
         """Extract the label colors and set opacity to 0.5 to highlight only the selected cell [to be updated with a better highlighting method]"""
@@ -290,3 +315,56 @@ class LineageTreeWidget(QWidget):
                 qt_modifiers |= Qt.MetaModifier
             return qt_modifiers
         return modifiers
+
+    def _on_table_clicked(self, value: str):
+        """Jump to the node selected by the user in the table"""
+        
+        if value not in ["Add", "Break"]:
+            node_df = self.track_df[self.track_df['node_id'] == value]
+            if not node_df.empty:
+                self._select_node(node_df, modifiers = None)
+        
+    def _update_buttons(self):
+        """Enable/disable the connect and break buttons when connections between selected nodes are possible/impossible"""
+
+        if len(self.selected) == 2 and self._check_connection(): 
+            self.connect_btn.setEnabled(True)
+            self.break_btn.setEnabled(True)
+        else: 
+            self.connect_btn.setEnabled(False)
+            self.break_btn.setEnabled(False)
+
+    def _check_connection(self) -> bool: 
+        """Check if a valid connection (1 time point apart) is possible between the two selected nodes, and if so make sure the one with the smallest time point comes first in self.selected"""
+
+        tp1, tp2 = self.selected[0]['t'], self.selected[1]['t']
+
+        # Check whether the two nodes are one time point apart
+        if not ((tp2 - tp1 == 1) or (tp1 - tp2 == 1)):
+            print('these two points are not one time point apart')
+            return False
+        
+        # Swap nodes to ensure that the one with the smallest time point comes first
+        if tp2 < tp1:
+            self.selected = [self.selected[1], self.selected[0]]               
+        return True
+
+    def _trigger_make_connection(self):
+        """Create a new connection between nodes and add the action to the table"""
+
+        node1 = self.selected[0]
+        node2 = self.selected[1]
+        self.table_widget._add_row({"Source": node1['node_id'], "Target": node2['node_id'], "Action": "Add", "Color1": [int(c) for c in node1['color'][:3]], "Color2": [int(c) for c in node2['color'][:3]]})
+        
+        self.selected = []
+        self._update_buttons()
+
+    def _trigger_break_connection(self):
+        """Break a connection between nodes and add the action to the table"""
+
+        node1 = self.selected[0]
+        node2 = self.selected[1]
+        self.table_widget._add_row({"Source": node1['node_id'], "Target": node2['node_id'], "Action": "Break", "Color1": [int(c) for c in node1['color'][:3]], "Color2": [int(c) for c in node2['color'][:3]]})
+        
+        self.selected = []
+        self._update_buttons()
