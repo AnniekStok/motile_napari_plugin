@@ -2,17 +2,18 @@ import napari.layers
 
 import numpy            as np
 import pyqtgraph        as pg
+import pandas           as pd 
 import copy 
 
 from qtpy.QtWidgets     import QHBoxLayout, QWidget
 from typing             import List, Dict
 from napari.utils       import DirectLabelColormap
 from matplotlib.colors  import to_rgba
-    
+
 import networkx as nx
 from motile_toolbox.candidate_graph import NodeAttr
 
-def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> List[Dict]:
+def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> pd.DataFrame:
     """
     Extract the information of individual tracks required for constructing the pyqtgraph plot. Follows the same logic as the relabel_segmentation
     function from the Motile toolbox.
@@ -26,14 +27,13 @@ def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.la
             It is used to extract the corresponding label color for the nodes and edges.        
 
     Returns:
-        List: List of dictionaries with keys 't', 'node_id', 'track_id', 'color', 'x', 'y', ('z'), 'index', 'parent_id', and 'parent_track_id', 
+        List: pd.DataFrame with columns 't', 'node_id', 'track_id', 'color', 'x', 'y', ('z'), 'index', 'parent_id', and 'parent_track_id', 
         containing all information needed to construct the pyqtgraph plot. 
     """
 
     track_list = []
     counter = 0
     id_counter = 1
-
     parent_mapping = []
 
     # Identify parent nodes (nodes with more than one child)
@@ -51,19 +51,23 @@ def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.la
         sorted_nodes = sorted(node_set, key=lambda node: solution_nx_graph.nodes[node][NodeAttr.TIME.value])
         parent_track_id = None
         for node in sorted_nodes:
-            track_dict = {}
-            time_frame = solution_nx_graph.nodes[node][NodeAttr.TIME.value]
-            pos = solution_nx_graph.nodes[node][NodeAttr.POS.value]
+            node_data = solution_nx_graph.nodes[node]
+            pos = node_data[NodeAttr.POS.value]
 
-            track_dict['t'] = time_frame
-            track_dict['node_id'] = node
-            track_dict['track_id'] = id_counter
-            track_dict['color'] = labels.colormap.map(id_counter) * 255
-            track_dict['x'] = pos[-1]
-            track_dict['y'] = pos[-2]
+            track_dict = {
+                't': node_data[NodeAttr.TIME.value],
+                'node_id': node,
+                'track_id': id_counter,
+                'color': labels.colormap.map(id_counter) * 255,
+                'x': pos[-1],
+                'y': pos[-2],
+                'index': counter,
+                'parent_id': 0,
+                'parent_track_id': 0
+            }
+
             if len(pos) == 3:
-                track_dict['z'] = pos[0]               
-            track_dict['index'] = counter
+                track_dict['z'] = pos[0]
 
             # Determine parent_id and parent_track_id
             predecessors = list(solution_nx_graph.predecessors(node))
@@ -85,15 +89,24 @@ def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.la
         parent_mapping.append({'track_id': id_counter, 'parent_track_id': parent_track_id})
         id_counter += 1
 
-    x_axis_order = determine_label_plot_order(parent_mapping)
+    x_axis_order = sort_track_ids(parent_mapping)
 
     for node in track_list: 
         node['x_axis_pos'] = x_axis_order.index(node['track_id'])
-    
-    return track_list
+   
+    return pd.DataFrame(track_list)
 
-def determine_label_plot_order(track_list: List[Dict]) -> List[Dict]:
-    """Determines the y-axis order of the tree plot, from the starting points downward"""
+def sort_track_ids(track_list: List[Dict]) -> List[Dict]:
+    """
+    Sort track IDs such to maintain left-first order in the tree formed by parent-child relationships.
+    Used to determine the x-axis order of the tree plot.
+
+    Args:
+        track_list (list): List of dictionaries with 'track_id' and 'parent_track_id'.
+
+    Returns:
+        list: Ordered list of track IDs for the x-axis.
+    """
     
     roots = [node['track_id'] for node in track_list if node['parent_track_id'] == 0]
     x_axis_order = [l for l in roots]
@@ -127,7 +140,6 @@ class LineageTreeWidget(QWidget):
         self.tree_widget.addItem(self.g)
         
         self.selected = []
-        self.selected_ids = []
 
         main_layout = QHBoxLayout()
         main_layout.addWidget(self.tree_widget)
@@ -139,44 +151,41 @@ class LineageTreeWidget(QWidget):
         # if already two objects were selected, reset self.selected so that self.selected does not get a length of 3
         if len(self.selected) == 2:
             self.selected = []
-            self.selected_ids = []
         modifiers = ev.modifiers()
 
         clicked_point = points[0]
         pos = clicked_point.pos()  # Get the coordinates of the clicked point
         index = clicked_point.index()  # Get the index of the clicked point
 
-        track_id = [node['track_id'] for node in self.track_list if node['index'] == index][0]
-        id = [node['node_id'] for node in self.track_list if node['index'] == index][0]
-        t = [node['t'] for node in self.track_list if node['index'] == index][0]
-               
-        print('Node Index:', index)
-        print('Node Coordinates:', pos)
-        print('this is the track id', track_id)
-        print('this is its id', id)
-        print('time point', t)
-        
-        # update the viewer but leave the plot at the current time point
-        step = list(self.viewer.dims.current_step)
-        step[0] = t
-        if 'z' in self.track_list[0].keys():
-            z = [node['z'] for node in self.track_list if node['index'] == index][0]
-            step[1] = int(z)
-        self.viewer.dims.current_step = step
-        self.labels.selected_label = track_id
-                
-        # update the graph
-        size = self.size.copy()
-        size[index] = 13
-       
-        if modifiers == pg.QtCore.Qt.ShiftModifier and len(self.selected) == 1:
-            size[self.selected[0]] = 13
-            self.selected.append(index)
-            self.selected_ids.append(id)
-        else: 
-            self.selected = [index]    
-            self.selected_ids = [id]    
-                       
+        # find the corresponding element in the list of dicts
+        node_df = self.track_df[self.track_df['index'] == index]
+        if not node_df.empty:
+            node = node_df.iloc[0].to_dict()  # Convert the filtered result to a dictionary
+            print('User selected node:', node)
+
+            # Update viewer step
+            step = list(self.viewer.dims.current_step)
+            step[0] = node['t']
+            
+            # Check for 'z' key and update step if exists
+            if 'z' in self.track_df.columns:
+                z = self.track_df.loc[self.track_df['index'] == index, 'z'].values[0]
+                step[1] = int(z)
+            
+            self.viewer.dims.current_step = step
+            self.labels.selected_label = node['track_id']
+            
+            # Update the graph
+            size = self.size.copy()
+            size[index] = 13
+
+            # Handle selection logic
+            if modifiers == pg.QtCore.Qt.ShiftModifier and len(self.selected) == 1:
+                size[self.selected[0]['index']] = 13
+                self.selected.append(node)
+            else: 
+                self.selected = [node]
+                                            
         self.g.setData(pos=self.pos, adj=self.adj, symbolBrush = self.symbolBrush, size = size, symbols = self.symbols, pen = self.pen)
 
         self._update_label_cmap()
@@ -186,9 +195,10 @@ class LineageTreeWidget(QWidget):
         
         color_dict_rgb = {None: (0.0, 0.0, 0.0, 0.0)}
 
-        for label in np.unique([node['track_id'] for node in self.track_list]):
-            color = list(to_rgba(self.labels.get_color(label)))   
-            color[-1] = 0.5 # set opacity to 0.5        
+        # Iterate over unique labels
+        for label in self.track_df['track_id'].unique():
+            color = list(to_rgba(self.labels.get_color(label)))
+            color[-1] = 0.5  # Set opacity to 0.5        
             color_dict_rgb[label] = color
 
         return color_dict_rgb      
@@ -197,7 +207,7 @@ class LineageTreeWidget(QWidget):
         """Set the opacity to full for track_ids of selected nodes [to be updated with a better highlighting method, bounding box?]"""
     
         color_dict_rgb = copy.deepcopy(self.label_color_dict)
-        selected_labels  = [node['track_id'] for node in self.track_list if node['node_id'] in self.selected_ids]
+        selected_labels  = [node['track_id'] for node in self.selected]
         for label in selected_labels:
             color_dict_rgb[label][-1] = 1 # set opacity to full
         self.labels.colormap = DirectLabelColormap(color_dict=color_dict_rgb)
@@ -205,7 +215,7 @@ class LineageTreeWidget(QWidget):
     def _update(self, tracks:nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> None:
         """Redraw the pyqtgraph object with the new tracking graph"""
 
-        self.track_list = extract_sorted_tracks(tracks, labels)
+        self.track_df = extract_sorted_tracks(tracks, labels)
         self.labels = labels
         self.labels.opacity = 1
         self.label_color_dict = self._create_label_color_dict()    
@@ -215,14 +225,14 @@ class LineageTreeWidget(QWidget):
         adj = []
         adj_colors = []
 
-        for node in self.track_list:      
+        for index, node in self.track_df.iterrows():      
             pos.append([node['x_axis_pos'], node['t']])
             pos_colors.append(node['color'])               
             parent = node['parent_id']
             if parent != 0:
-                parent_dict_list = [n for n in self.track_list if n['node_id'] == parent]
-                if len(parent_dict_list) > 0:
-                    parent_dict = parent_dict_list[0]
+                parent_df = self.track_df[self.track_df['node_id'] == parent]
+                if not parent_df.empty:
+                    parent_dict = parent_df.iloc[0]
                     adj.append([parent_dict['index'], node['index']])
                     adj_colors.append(parent_dict['color'].tolist() + [255, 1])
             
