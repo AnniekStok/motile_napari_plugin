@@ -161,6 +161,10 @@ class RunEditor(QGroupBox):
             MotileRun: A run with name, parameters, and input segmentation.
                 Output segmentation and tracks not yet specified.
         """
+        # This is where you'd need to get the information about the pinned
+        # edges and add it to the run. I think you can just pass a reference to the
+        # graph widget to the constructor of this run editor widget,
+        # save it as an attribute here, and then query it for the pinned edges
         run_name = self.run_name.text()
         input_seg = self.get_labels_data()
         if input_seg is None:

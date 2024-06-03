@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 from motile import Solver, TrackGraph
-from motile.constraints import ExclusiveNodes, MaxChildren, MaxParents
+from motile.constraints import ExclusiveNodes, MaxChildren, MaxParents, Pin
 from motile.costs import Appear, Disappear, EdgeDistance, EdgeSelection, Split
 from motile_toolbox.candidate_graph import (
     EdgeAttr,
@@ -21,12 +21,29 @@ def solve(
     solver_params: SolverParams,
     segmentation: np.ndarray,
     on_solver_update=None,
+    pinned_edges: list[tuple(str, str, bool)] | None = None,
+    # We probably pass the pinned edges in here as an argument to solve.
+    # Alternatively, you could add them to solver_params.
+    # If you have something more complex than true or false on edges,
+    # this might need to be more complex.
+    # Also, this isn't saved between runs and the full list needs to be passed
+    # every time.
 ):
     cand_graph, conflict_sets = get_candidate_graph(
         segmentation,
         solver_params.max_edge_distance,
         iou=solver_params.iou is not None,
     )
+
+    # Here is where you add the pin constraints to the candidate graph
+    # The IDs SHOULD match the solution graph where you did the annotation
+    # But there is a chance the edge is not in the graph if you change the
+    # max edge distance, for example
+    # This is just demo code and probably won't run properly
+    for edge in pinned_edges:
+        source_id, target_id, value = edge
+        cand_graph[source_id][target_id]["pinned"] = value
+
     logger.debug("Cand graph has %d nodes", cand_graph.number_of_nodes())
     solver = construct_solver(cand_graph, solver_params, conflict_sets)
     start_time = time.time()
@@ -47,6 +64,10 @@ def construct_solver(cand_graph, solver_params, exclusive_sets):
     solver.add_constraints(MaxParents(1))
     if exclusive_sets is None or len(exclusive_sets) > 0:
         solver.add_constraints(ExclusiveNodes(exclusive_sets))
+
+    # Here is where you add the pin constraints, based on the attribute name
+    # you picked when making the graph
+    solver.add_constraints(Pin("pinned"))
 
     if solver_params.appear_cost is not None:
         solver.add_costs(Appear(solver_params.appear_cost))

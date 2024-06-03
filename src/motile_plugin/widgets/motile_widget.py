@@ -1,5 +1,4 @@
 import logging
-import pyqtgraph        as pg
 
 from motile_toolbox.utils import relabel_segmentation
 from motile_toolbox.visualization import to_napari_tracks_layer
@@ -16,12 +15,13 @@ from superqt.utils import thread_worker
 from motile_plugin.backend.motile_run import MotileRun
 from motile_plugin.backend.solve import solve
 
+from .pyqt_graph import LineageTreeWidget
 from .run_editor import RunEditor
 from .run_viewer import RunViewer
 from .runs_list import RunsList
-from .pyqt_graph import LineageTreeWidget
 
 logger = logging.getLogger(__name__)
+
 
 class MotileWidget(QWidget):
     """The main widget for the motile napari plugin. Coordinates sub-widgets
@@ -53,7 +53,9 @@ class MotileWidget(QWidget):
         self.run_list_widget.view_run.connect(self.view_run_napari)
 
         self.tree_widget = LineageTreeWidget(viewer)
-        self.viewer.window.add_dock_widget(self.tree_widget, name='Lineage Tree', area='bottom')
+        self.viewer.window.add_dock_widget(
+            self.tree_widget, name="Lineage Tree", area="bottom"
+        )
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -121,9 +123,10 @@ class MotileWidget(QWidget):
         self.edit_run_widget.hide()
         self.view_run_widget.show()
         self.update_napari_layers(run)
-        if run.tracks is not None: 
-            self.tree_widget._update(run.tracks, self.output_seg_layer) # make a call to update pyqtgraph widget
-
+        if run.tracks is not None:
+            self.tree_widget._update(
+                run.tracks, self.output_seg_layer
+            )  # make a call to update pyqtgraph widget
 
     def edit_run(self, run: MotileRun | None):
         """Create or edit a new run in the run editor. Also removes solution layers
@@ -167,6 +170,8 @@ class MotileWidget(QWidget):
         Returns:
             MotileRun: The provided run with the output graph and segmentation included.
         """
+        # You'll need to pass the pinned edge here. I'd probably add them to the
+        # MotileRun to pass them around easily.
         run.tracks = solve(
             run.solver_params,
             run.input_segmentation,
