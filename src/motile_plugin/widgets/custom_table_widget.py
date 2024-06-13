@@ -59,9 +59,7 @@ class TableWidget(QWidget):
         self.valueClicked.emit(str(item.text()))
 
     def set_content(self):
-        """
-        Update the displayed contents in the QTableWidget
-        """
+        """Update the displayed contents in the QTableWidget"""
 
         self._view.clear()
         try:

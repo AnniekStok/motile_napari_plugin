@@ -27,6 +27,9 @@ class MotileRun(BaseModel):
     time: datetime = datetime.now()
     gaps: list[float] = []
     status: str = "done"
+    pinned_edges: list[tuple[str, str, bool]] | None = None
+    forked_nodes: list[str] | None = None
+    endpoint_nodes: list[str] | None = None
     # pydantic does not check numpy arrays
     model_config = {"arbitrary_types_allowed": True}
 

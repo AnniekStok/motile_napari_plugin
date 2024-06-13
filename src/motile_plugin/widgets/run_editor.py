@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class RunEditor(QGroupBox):
     start_run = Signal(MotileRun)
 
-    def __init__(self, viewer: napari.Viewer):
+    def __init__(self, viewer: napari.Viewer, tree_widget):
         """A widget for editing run parameters and starting solving.
         Has to know about the viewer to get the input segmentation
         from the current layers.
@@ -46,6 +46,7 @@ class RunEditor(QGroupBox):
         self.solver_params_widget = SolverParamsEditor()
         self.run_name: QLineEdit
         self.layer_selection_box: magicgui.widgets.Widget
+        self.tree_widget = tree_widget
 
         # Generate Tracks button
         generate_tracks_btn = QPushButton("Run Tracking")
@@ -161,8 +162,12 @@ class RunEditor(QGroupBox):
             MotileRun: A run with name, parameters, and input segmentation.
                 Output segmentation and tracks not yet specified.
         """
+
+        # run should contain the pin info
         run_name = self.run_name.text()
         input_seg = self.get_labels_data()
+        pins = self.tree_widget._get_pins()
+        
         if input_seg is None:
             warn("No input labels layer selected", stacklevel=2)
             return None
@@ -172,6 +177,9 @@ class RunEditor(QGroupBox):
             run_name=run_name,
             solver_params=params,
             input_segmentation=input_seg,
+            pinned_edges = pins,
+            forked_nodes = self.tree_widget.forks,
+            endpoint_nodes = self.tree_widget.endpoints,
         )
 
     def emit_run(self) -> None:
