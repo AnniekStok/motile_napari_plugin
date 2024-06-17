@@ -6,6 +6,7 @@ from napari                         import Viewer
 from qtpy.QtWidgets                 import QPushButton
 from PyQt5.QtCore                   import Qt
 
+
 from motile_toolbox.candidate_graph import NodeAttr
 
 def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> pd.DataFrame:
@@ -163,7 +164,7 @@ def get_existing_forks_endpoints(solution_nx_graph: nx.DiGraph) -> Tuple[List[st
 def bind_key_with_condition(viewer: Viewer, key: str, button: QPushButton, target_function: Callable[[Any], None]) -> None:
     """Binds a key to a function, only triggering if the button is enabled."""
     
-    @viewer.bind_key(key)
+    @viewer.bind_key(key, overwrite = True)
     def wrapped_function(event=None):
         if button.isEnabled():
             target_function()

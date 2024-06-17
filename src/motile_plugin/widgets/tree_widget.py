@@ -10,15 +10,15 @@ from PyQt5.QtGui        import QMouseEvent
 from functools          import partial
 
 from qtpy.QtWidgets     import QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QGroupBox
-from typing             import List, Dict, Tuple
-from napari.utils       import DirectLabelColormap
-from matplotlib.colors  import to_rgba
+from typing             import List, Tuple
 
 import networkx as nx
 
 from .custom_table_widget  import TableWidget
+from .volume_mode_widget    import VolumeModeWidget
+from ..utils.point_tracker     import PointTracker
 
-from ..utils.tree_widget_utils import bind_key_with_condition, extract_sorted_tracks, get_existing_pins, normalize_modifiers, get_existing_forks_endpoints
+from ..utils.tree_widget_utils import bind_key_with_condition, extract_sorted_tracks, get_existing_pins, get_existing_forks_endpoints
 
 class LineageTreeWidget(QWidget):
     """Interactive pyqtgraph based lineage tree widget class.
@@ -30,6 +30,8 @@ class LineageTreeWidget(QWidget):
         self.viewer = viewer
         self.forks = []
         self.endpoints = []
+        self.selected_labels_layer = None
+        self.plane_slider = None
 
         # Construct the tree view pyqtgraph widget
         self.tree_widget = pg.PlotWidget()
@@ -42,7 +44,7 @@ class LineageTreeWidget(QWidget):
 
         # Add buttons to modify nodes
         button_layout = QVBoxLayout()
-
+        
         node_box = QGroupBox('Modify nodes')
         node_box_layout = QVBoxLayout()
         node_box.setLayout(node_box_layout)
@@ -74,7 +76,7 @@ class LineageTreeWidget(QWidget):
         edge_box_layout.addWidget(self.connect_btn)
         
         self.break_btn = QPushButton('Break [B]')
-        self.connect_btn.clicked.connect(partial(self._edit_edge, edit='Break'))
+        self.break_btn.clicked.connect(partial(self._edit_edge, edit='Break'))
         self.break_btn.setEnabled(False)
         edge_box_layout.addWidget(self.break_btn)
 
@@ -85,21 +87,13 @@ class LineageTreeWidget(QWidget):
         self.table_widget = TableWidget(data={"Source": [], "Target": [], "Action": [], "Color1": [], "Color2": []}, displayed_columns=["Source", "Target", "Action"])
         self.table_widget.setMaximumWidth(200)
         self.table_widget.valueClicked.connect(self._on_table_clicked)
-
         self.selected = []
 
-        main_layout = QHBoxLayout()
-        main_layout.addLayout(button_layout)
-        main_layout.addWidget(self.tree_widget)
-        main_layout.addWidget(self.table_widget)
-        self.setLayout(main_layout)
-
-        # Add key bindings for faster annotation        
-        bind_key_with_condition(self.viewer, 'A', self.connect_btn, partial(self._edit_edge, edit='Add'))
-        bind_key_with_condition(self.viewer, 'B', self.break_btn, partial(self._edit_edge, edit='Break'))
-        bind_key_with_condition(self.viewer, 'F', self.fork_btn, partial(self._edit_node, edit='Fork'))
-        bind_key_with_condition(self.viewer, 'C', self.close_btn, partial(self._edit_node, edit='Close'))
-        bind_key_with_condition(self.viewer, 'R', self.reset_btn, partial(self._edit_node, edit='Reset'))
+        self.layout = QHBoxLayout()
+        self.layout.addLayout(button_layout)
+        self.layout.addWidget(self.tree_widget)
+        self.layout.addWidget(self.table_widget)
+        self.setLayout(self.layout)
 
     def _get_pins(self) -> List[Tuple[str, str, bool]]:
         """Extracts the edge edits ('Add', 'Break') from the table, to be used to pin edges as True or False"""
@@ -128,28 +122,37 @@ class LineageTreeWidget(QWidget):
         self.track_df = extract_sorted_tracks(tracks, labels)
         self.labels = labels
         self.labels.opacity = 1
+        self.point_tracker = PointTracker(self.track_df, self.viewer)
+        self.point_tracker.point_selected.connect(self._on_point_selected)
+
+        # Add key bindings for faster annotation        
+        bind_key_with_condition(self.viewer, 'A', self.connect_btn, partial(self._edit_edge, edit='Add'))
+        bind_key_with_condition(self.viewer, 'B', self.break_btn, partial(self._edit_edge, edit='Break'))
+        bind_key_with_condition(self.viewer, 'F', self.fork_btn, partial(self._edit_node, edit='Fork'))
+        bind_key_with_condition(self.viewer, 'C', self.close_btn, partial(self._edit_node, edit='Close'))
+        bind_key_with_condition(self.viewer, 'R', self.reset_btn, partial(self._edit_node, edit='Reset'))
+
         pins = get_existing_pins(tracks)
         forks, endpoints = get_existing_forks_endpoints(tracks)
-        
-        # add callback to clicking on the labels layer to select cells in the pyqtgraph 
-        @self.labels.mouse_drag_callbacks.append
-        def click(layer, event):
-            if event.type == 'mouse_press':  # Check if the event is a mouse press event
-                position = event.position
-                value = layer.get_value(position,
-                    view_direction=event.view_direction,
-                    dims_displayed=event.dims_displayed,
-                    world=True)
-                node_df = self.track_df[(self.track_df['t'] == int(position[0])) & (self.track_df['track_id'] == int(value))]
-                if not node_df.empty:
-                    modifiers = event.modifiers
-                    if isinstance(event.modifiers, tuple):
-                        modifiers = normalize_modifiers(event.modifiers)
-                    self._select_node(node_df, modifiers)
-                     
-        # create a color dictionary to manipulate opacity of label colors, depending on whether they are currently selected
-        self.label_color_dict = self._create_label_color_dict()    
 
+        if len(self.labels.data.shape) == 4: 
+            self.selected_labels_layer = self.viewer.add_labels(self.labels.data, name = "Selected Label")
+            self.selected_labels_layer.editable = False
+            self.selected_labels_layer.show_selected_label = True
+            self.selected_labels_layer.blending = 'translucent_no_depth'
+            self.selected_labels_layer.depiction = 'volume'
+            self.plane_slider = VolumeModeWidget(
+                self.viewer, 
+                self.labels, 
+                self.selected_labels_layer, 
+                self.point_tracker.points, 
+                self.point_tracker.lines, 
+                self.point_tracker.line_colors
+            )
+            self.viewer.dims.ndisplay = 3
+            self.point_tracker.points.blending = 'translucent_no_depth'
+            self.layout.insertWidget(0, self.plane_slider)
+                                
         pos = []
         pos_colors = []
         adj = []
@@ -195,6 +198,14 @@ class LineageTreeWidget(QWidget):
         else: 
             self.g.scatter.clear()
 
+    def _on_point_selected(self, node_id: str, modifiers: Qt.KeyboardModifiers) -> None:
+        """Connect point selection in the point_tracker to the tree widget"""
+
+        # find the corresponding element in the list of dicts
+        node_df = self.track_df[self.track_df['node_id'] == node_id]
+        if not node_df.empty:
+            self._select_node(node_df, modifiers)
+
     def _on_click(self, _, points: np.ndarray, ev: QMouseEvent) -> None:
         """Highlight and print the information about the currently selected node"""
 
@@ -217,18 +228,27 @@ class LineageTreeWidget(QWidget):
         # extract the selected node 
         node = node_df.iloc[0].to_dict()  # Convert the filtered result to a dictionary
 
-        # Update viewer step
-        step = list(self.viewer.dims.current_step)
-        step[0] = node['t']
-        
-        # Check for 'z' key and update step if exists
-        if 'z' in node.keys():
-            z = node['z']
-            step[1] = int(z)
-        
-        self.viewer.dims.current_step = step
-        self.labels.selected_label = node['track_id']
-        
+        # Update viewer step (only if the SHIFT key was not used)
+        if modifiers != pg.QtCore.Qt.ShiftModifier:
+            
+            # Check for 'z' key and update step if exists
+            step = list(self.viewer.dims.current_step)
+            step[0] = node['t']
+            if 'z' in node.keys():
+                z = node['z']
+                step[1] = int(z)       
+            self.viewer.dims.current_step = step
+            
+            # if the viewer is in 3D plane mode, also adjust the plane we are looking at
+            if self.plane_slider is not None: 
+                if self.plane_slider.mode == 'plane':
+                    self.plane_slider._set_plane_value(value=int(z))
+
+            # update the selected label in the selected labels layer            
+            self.labels.selected_label = node['track_id']
+            if self.selected_labels_layer is not None:
+                self.selected_labels_layer.selected_label = node['track_id']
+            
         # Update the graph
         size = self.size.copy() # just copy the size here to keep the original self.size intact
         size[node['index']] = size[node['index']] + 5
@@ -242,30 +262,7 @@ class LineageTreeWidget(QWidget):
                              
         self.g.setData(pos=self.pos, adj=self.adj, symbolBrush = self.symbolBrush, size = size, symbol = self.symbols, pen = self.pen)
 
-        self._update_label_cmap()
         self._update_buttons()
-
-    def _create_label_color_dict(self) -> Dict:
-        """Extract the label colors and set opacity to 0.5 to highlight only the selected cell [to be updated with a better highlighting method]"""
-        
-        color_dict_rgb = {None: (0.0, 0.0, 0.0, 0.0)}
-
-        # Iterate over unique labels
-        for label in self.track_df['track_id'].unique():
-            color = list(to_rgba(self.labels.get_color(label)))
-            color[-1] = 0.5  # Set opacity to 0.5        
-            color_dict_rgb[label] = color
-
-        return color_dict_rgb      
-    
-    def _update_label_cmap(self) -> None:
-        """Set the opacity to full for track_ids of selected nodes [to be updated with a better highlighting method, bounding box?]"""
-    
-        color_dict_rgb = copy.deepcopy(self.label_color_dict)
-        selected_labels  = [node['track_id'] for node in self.selected]
-        for label in selected_labels:
-            color_dict_rgb[label][-1] = 1 # set opacity to full
-        self.labels.colormap = DirectLabelColormap(color_dict=color_dict_rgb)
 
     def _on_table_clicked(self, value: str) -> None:
         """Jump to the node selected by the user in the table"""
@@ -347,7 +344,7 @@ class LineageTreeWidget(QWidget):
             self.symbolBrush[node['index']] = [255, 0, 0, 255]
             
             if node['node_id'] in self.forks: 
-                self.endpoints.remove(node['node_id'])
+                self.forks.remove(node['node_id'])
 
             self.endpoints.append(node['node_id'])
         
