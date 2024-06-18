@@ -18,7 +18,7 @@ from motile_plugin.backend.solve import solve
 from .run_editor import RunEditor
 from .run_viewer import RunViewer
 from .runs_list import RunsList
-from .tree_widget import LineageTreeWidget
+from .track_annotator import TrackAnnotationWidget
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,12 @@ class MotileWidget(QWidget):
         self.tracks_layer: Tracks | None = None
 
         # Create sub-widgets and connect signals
-        self.tree_widget = LineageTreeWidget(viewer)
+        self.annotator_widget = TrackAnnotationWidget(viewer)
         self.viewer.window.add_dock_widget(
-            self.tree_widget, name="Lineage Tree", area="bottom"
+            self.annotator_widget, name="Track Annotation", area="bottom"
         )
 
-        self.edit_run_widget = RunEditor(self.viewer, self.tree_widget)
+        self.edit_run_widget = RunEditor(self.viewer, self.annotator_widget)
         self.edit_run_widget.start_run.connect(self._generate_tracks)
 
         self.view_run_widget = RunViewer()
@@ -123,10 +123,9 @@ class MotileWidget(QWidget):
         self.view_run_widget.show()
         self.update_napari_layers(run)
         if run.tracks is not None: 
-            self.tree_widget._update(
-                run.tracks, self.output_seg_layer
-            ) # make a call to update pyqtgraph widget
-
+            self.annotator_widget._update(
+                run.tracks, self.output_seg_layer, self.tracks_layer
+            ) # make a call to update track annotator widget
 
     def edit_run(self, run: MotileRun | None):
         """Create or edit a new run in the run editor. Also removes solution layers

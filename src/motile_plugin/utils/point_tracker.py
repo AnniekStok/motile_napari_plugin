@@ -2,45 +2,28 @@
 import napari.layers
 import pandas                       as pd 
 import numpy                        as np
-import networkx                     as nx
-from PyQt5.QtCore                   import Qt, QObject
-from PyQt5.QtCore                   import pyqtSignal
 
-from .tree_widget_utils             import normalize_modifiers
-
-
-class PointTracker(QObject):
-    """Class to construct a points layer and corresponding line layer"""
-
-    point_selected = pyqtSignal(str, object)  # Define a signal to emit the node_id of selected point and keyboard modifier
+class PointTracker:
+    """Constructs a point layer for 3D + time data, displaying points at the current timepoint, or current timepoint + 1. 
+    Also constructs a shapes layer consisting of lines between the points from different time points."""
 
     def __init__(self, df:pd.DataFrame, viewer: napari.Viewer):
-        super(PointTracker, self).__init__()
-
+        
         self.df = df
         self.viewer = viewer
+        self.display = 'single' # toggle between 'single' for showing just the points for the current time point and 'combined' for also showing the points for t+1
+
         self.points = self.construct_points()
         self.points.editable = False
-        
-        @self.points.mouse_drag_callbacks.append
-        def click(layer, event):
-            if event.type == 'mouse_press': 
-                point_index = layer.get_value(event.position, 
-                    view_direction=event.view_direction,
-                    dims_displayed=event.dims_displayed,
-                    world=True)
-                if point_index is not None:                 
-                    node_id = layer.properties['node_id'][point_index]
-                    modifiers = event.modifiers
-                    if isinstance(event.modifiers, tuple):
-                        modifiers = normalize_modifiers(event.modifiers)
-                    self.point_selected.emit(node_id, modifiers)
 
         self.lines = self.construct_lines()  
+        self.lines.visible = False
         self.lines.editable = False
-        self.lines.interactive = False
-
+        self.lines.mouse_pan = False
+        self.lines.mouse_zoom = False
+                
     def construct_lines(self) -> napari.layers.Shapes:
+        """Construct a shapes layer consisting of lines connecting the points from different time points"""
         
         # Create lines between points at t and t+1
         lines = []
@@ -59,68 +42,70 @@ class PointTracker(QObject):
                 
                 track_ids.append(parent_dict['track_id'])
                 lines.append([start_point, end_point])
-                self.line_colors.append(parent_dict['color'])
+                self.line_colors.append(parent_dict['color'] / 255)
         
         line_properties = {'track_id': track_ids}
-
+        
         return self.viewer.add_shapes(lines, shape_type='line', edge_color=self.line_colors, edge_width=1, properties = line_properties)
 
     def construct_points(self) -> napari.layers.Points:
         """Create a point layer for the nodes in the table, showing t and t+1 with different opacities."""
 
-        # Get min and max values for t
+        # Collect point data per time point
+        self.colors_t = np.array(self.df['color'].tolist()) / 255
+        node_ids = self.df['node_id'].values
+        track_ids = self.df['track_id'].values
+        self.properties = {'node_id': node_ids, 'track_id': track_ids}
+        if 'z' in self.df.columns:
+            self.points_t = np.column_stack((self.df['t'].values, self.df['z'].values, self.df['y'].values, self.df['x'].values))
+        else:
+            self.points_t = self.df[['t', 'y', 'x']].values
+      
+        # Create additional points for t+1 and combine
+        df_shift = self.df.copy()
+        df_shift['t'] -= 1
+
         min_t = self.df['t'].min()
         max_t = self.df['t'].max()
-
-        # Extract relevant columns
-        points_t = self.df[['t', 'y', 'x']].values
-
-        # Check if 'z' column is present and adjust points accordingly
-        if 'z' in self.df.columns:
-            points_t = np.column_stack((self.df['t'].values, self.df['z'].values, self.df['y'].values, self.df['x'].values))
+        df_shift = df_shift[(df_shift['t'] >= min_t) & (df_shift['t'] <= max_t)]
+        colors_shift = np.array(df_shift['color'].tolist()) / 255
+        node_ids_shift = df_shift['node_id'].values
+        track_ids_shift = df_shift['track_id'].values     
+        if 'z' in df_shift.columns:
+            points_shift = np.column_stack((df_shift['t'].values, df_shift['z'].values, df_shift['y'].values, df_shift['x'].values))
         else:
-            points_t = self.df[['t', 'y', 'x']].values
+            points_shift = df_shift[['t', 'y', 'x']].values
 
-        # Extract colors
-        colors_t = np.array(self.df['color'].tolist())
+        self.combined_points = np.vstack((self.points_t, points_shift))
+        self.combined_colors = np.vstack((self.colors_t, colors_shift))
+        self.combined_properties = {'node_id': np.concatenate((node_ids, node_ids_shift)), 'track_id': np.concatenate((track_ids, track_ids_shift))}
 
-        # Create points for t+1
-        df_t_plus_1 = self.df.copy()
-        df_t_plus_1['t'] -= 1
-        df_t_plus_1 = df_t_plus_1[(df_t_plus_1['t'] >= min_t) & (df_t_plus_1['t'] <= max_t)]
+        # Set different opacity and edge colors for the combined points
+        self.combined_opacities = np.array([1] * len(self.points_t) + [0.5] * len(points_shift))
+        self.combined_edge_colors = np.array(['white'] * len(self.points_t) + ['black'] * len(points_shift))
+        self.combined_colors[:, 3] = self.combined_opacities
 
-        points_t_plus_1 = df_t_plus_1[['t', 'y', 'x']].values
+        # Add points layer (single time point) to the Napari viewer        
+        return self.viewer.add_points(self.points_t, edge_color = 'white', properties = self.properties, face_color=self.colors_t, size=5)
+    
+    def _switch_mode(self, mode: str):
+        """Switch between displaying data for a single time point or for two time points combined"""
         
-        if 'z' in df_t_plus_1.columns:
-            points_t_plus_1 = np.column_stack((df_t_plus_1['t'].values, df_t_plus_1['z'].values, df_t_plus_1['y'].values, df_t_plus_1['x'].values))
-        else:
-            points_t_plus_1 = df_t_plus_1[['t', 'y', 'x']].values
+        if mode == "combined":
+            self.points.data = self.combined_points
+            self.points.edge_color = self.combined_edge_colors
+            self.points.properties = self.combined_properties
+            self.points.face_color = self.combined_colors 
+            self.lines.visible = True
+        if mode == "single":
+            self.points.data = self.points_t
+            self.points.edge_color = 'white'
+            self.points.properties = self.properties
+            self.points.face_color = self.colors_t 
+            self.lines.visible = False
+            
+        
 
-        colors_t_plus_1 = np.array(df_t_plus_1['color'].tolist())
-
-        # Combine points and colors
-        combined_points = np.vstack((points_t, points_t_plus_1))
-        combined_colors = np.vstack((colors_t, colors_t_plus_1))
-
-        # node ids
-        node_ids = self.df['node_id'].values
-        node_ids_shift = df_t_plus_1['node_id'].values
-
-        track_ids = self.df['track_id'].values
-        track_ids_shift = df_t_plus_1['track_id'].values
-
-        point_properties = {'node_id': np.concatenate((node_ids, node_ids_shift)), 'track_id': np.concatenate((track_ids, track_ids_shift))}
-
-        # Set opacities, 1 for t, 0.5 for t+1
-        opacities = np.array([1] * len(points_t) + [0.5] * len(points_t_plus_1))
-
-        edge_colors = np.array(['white'] * len(points_t) + ['black'] * len(points_t_plus_1))
-
-        # Apply opacities to colors
-        combined_colors[:, 3] = opacities * 255  # Assuming colors are in RGBA format with values [0, 255]
-
-        # Add points layer to the Napari viewer
-        return self.viewer.add_points(combined_points, edge_color = edge_colors, properties = point_properties, face_color=combined_colors / 255, size=5)
         
         
         

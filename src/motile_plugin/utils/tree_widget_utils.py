@@ -1,12 +1,14 @@
 import napari.layers
+import copy
 import pandas                       as pd 
 import networkx                     as nx
+import numpy                        as np
 from typing                         import List, Dict, Tuple, Callable, Any
 from napari                         import Viewer
 from qtpy.QtWidgets                 import QPushButton
 from PyQt5.QtCore                   import Qt
-
-
+from napari.utils                   import Colormap, DirectLabelColormap
+from matplotlib.colors              import to_rgba
 from motile_toolbox.candidate_graph import NodeAttr
 
 def extract_sorted_tracks(solution_nx_graph: nx.DiGraph, labels:napari.layers.labels.labels.Labels) -> pd.DataFrame:
@@ -186,3 +188,66 @@ def normalize_modifiers(modifiers):
         return qt_modifiers
     
     return modifiers
+
+def create_colormap(tracked_labels: napari.layers.Labels, name: str) -> None:
+    """Create a colormap for the label colors in the napari Labels layer"""
+
+    labels = []
+    colors = []
+    for label in np.unique(tracked_labels.data):
+        if label != 0:
+            labels.append(label)
+            colors.append(tracked_labels.get_color(label))
+                
+    n_labels = len(labels)
+    controls = np.arange(n_labels + 1) / n_labels  # Ensure controls are evenly spaced
+
+    # Create a Colormap with discrete mapping using RGBA colors
+    colormap = Colormap(colors=colors, controls=controls, name=name, interpolation='zero')
+
+    # Register the colormap
+    from napari.utils.colormaps import AVAILABLE_COLORMAPS
+    AVAILABLE_COLORMAPS[name] = colormap
+
+def create_selection_colormap(tracked_labels: napari.layers.Labels, name: str, selection: List[int]) -> None:
+    """Create a colormap for the label colors in the napari Labels layer"""
+
+    labels = []
+    colors = []
+    for label in selection:
+        if label != 0:
+            labels.append(label)
+            colors.append(tracked_labels.get_color(label))
+                
+    n_labels = len(labels)
+    controls = np.arange(n_labels + 1) / n_labels  # Ensure controls are evenly spaced
+
+    # Create a Colormap with discrete mapping using RGBA colors
+    colormap = Colormap(colors=colors, controls=controls, name=name, interpolation='zero')
+
+    # Register the colormap
+    from napari.utils.colormaps import AVAILABLE_COLORMAPS
+    AVAILABLE_COLORMAPS[name] = colormap
+
+
+def create_label_color_dict(labels: List[int], labels_layer: napari.layers.Labels) -> Dict:
+    """Extract the label colors to generate a base colormap, but keep opacity at 0"""
+    
+    color_dict_rgb = {None: (0.0, 0.0, 0.0, 0.0)}
+
+    # Iterate over unique labels
+    for label in labels:
+        color = list(to_rgba(labels_layer.get_color(label)))
+        color[-1] = 0  # Set opacity to 0 (will be replaced when a label is selected)        
+        color_dict_rgb[label] = color
+
+    return color_dict_rgb      
+
+def update_label_cmap(color_dict_rgb: Dict, visible: List[int]) -> DirectLabelColormap:
+    """Generates a label colormap with only a selection visible"""
+
+    color_dict_rgb_temp = copy.deepcopy(color_dict_rgb)
+    for label in visible:
+        color_dict_rgb_temp[label][-1] = 1 # set opacity to full
+    
+    return DirectLabelColormap(color_dict=color_dict_rgb_temp)
