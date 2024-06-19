@@ -40,12 +40,12 @@ class MotileWidget(QWidget):
         self.tracks_layer: Tracks | None = None
 
         # Create sub-widgets and connect signals
-        self.annotator_widget = TrackAnnotationWidget(viewer)
+        self.track_annotator = TrackAnnotationWidget(viewer)
         self.viewer.window.add_dock_widget(
-            self.annotator_widget, name="Track Annotation", area="bottom"
+            self.track_annotator, name="Track Annotation", area="bottom"
         )
 
-        self.edit_run_widget = RunEditor(self.viewer, self.annotator_widget)
+        self.edit_run_widget = RunEditor(self.viewer, self.track_annotator)
         self.edit_run_widget.start_run.connect(self._generate_tracks)
 
         self.view_run_widget = RunViewer()
@@ -123,7 +123,7 @@ class MotileWidget(QWidget):
         self.view_run_widget.show()
         self.update_napari_layers(run)
         if run.tracks is not None: 
-            self.annotator_widget._update(
+            self.track_annotator._update(
                 run.tracks, self.output_seg_layer, self.tracks_layer
             ) # make a call to update track annotator widget
 

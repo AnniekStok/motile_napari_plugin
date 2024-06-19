@@ -1,16 +1,19 @@
 import napari.layers
 
+import numpy            as np
 import networkx         as nx
 from functools          import partial
-from qtpy.QtWidgets     import QHBoxLayout, QWidget
+from qtpy.QtWidgets     import QHBoxLayout, QWidget, QVBoxLayout
 from typing             import List, Tuple
 
 from .custom_table_widget       import TableWidget
 from .volume_mode_widget        import VolumeModeWidget
 from .tree_widget               import TreeWidget
 from .edit_button_widget        import AnnotationButtons
-from ..utils.tree_widget_utils  import bind_key_with_condition, extract_sorted_tracks, get_existing_pins, get_existing_forks_endpoints, create_colormap, update_label_cmap, create_label_color_dict
+from .mode_selection_widget     import SelectMode
+from ..utils.tree_widget_utils  import bind_key_with_condition, extract_sorted_tracks, get_existing_pins, get_existing_forks_endpoints, create_colormap, create_selection_label_cmap, create_label_color_dict, extract_lineage_tree
 from ..utils.node_selection     import NodeSelectionList
+
 
 class TrackAnnotationWidget(QWidget):
     """Widget for interactive annotation of tracking results. 
@@ -25,17 +28,25 @@ class TrackAnnotationWidget(QWidget):
         self.viewer.dims.events.current_step.connect(self._check_dim_changed)
         
         self.selected_nodes = NodeSelectionList()   
+        self.selected_nodes.list_updated.connect(self._set_selected_node)
         self.selected_nodes.list_updated.connect(self._set_current_step)  
         self.selected_nodes.list_updated.connect(self._highlight_selected_nodes)  
         self.forks = []
         self.endpoints = []
         self.base_label_color_dict = None
+        self.mode = 'selection'
 
         # construct tree widget and buttons that reactively respond to changes in the selection of nodes
         self.tree_widget = TreeWidget(self.selected_nodes, self.forks, self.endpoints)
+        self.mode_widget = SelectMode()
+        self.mode_widget.mode_updated.connect(self._update_mode)
         self.edit_buttons = AnnotationButtons(self.selected_nodes)
         self.edit_buttons.node_edit.connect(self.tree_widget._edit_node)
         self.edit_buttons.edge_edit.connect(self._edit_edge)
+
+        mode_button_layout = QVBoxLayout()
+        mode_button_layout.addWidget(self.mode_widget)
+        mode_button_layout.addWidget(self.edit_buttons)
        
         # Add a table widget to keep accumulate actions before triggering the solver
         self.table_widget = TableWidget(data={"Source": [], "Target": [], "Action": [], "Color1": [], "Color2": []}, displayed_columns=["Source", "Target", "Action"])
@@ -46,11 +57,11 @@ class TrackAnnotationWidget(QWidget):
         self.selected_labels_layer = None
 
         # Used for 3D visualization only
-        self.plane_slider = None
+        self.volume_viewer = None
         
         # Add widgets to layout
         self.layout = QHBoxLayout()
-        self.layout.addWidget(self.edit_buttons)
+        self.layout.addLayout(mode_button_layout)
         self.layout.addWidget(self.tree_widget)
         self.layout.addWidget(self.table_widget)
         self.setLayout(self.layout)
@@ -90,30 +101,70 @@ class TrackAnnotationWidget(QWidget):
             self.viewer.dims.current_step = step
 
             # if the viewer is in 3D plane mode, also adjust the plane we are looking at
-            if self.plane_slider is not None: 
-                if self.plane_slider.mode == 'plane':
-                    self.plane_slider._set_plane_value(value=int(z))
+            if self.volume_viewer is not None: 
+                if self.volume_viewer.mode == 'plane':
+                    self.volume_viewer._set_plane_value(pos=(int(z), int(node['y']), int(node['x'])))
        
     def _check_dim_changed(self) -> None: 
         """Checks if the time dimensions was updated, and if so, call the _highlight_selected_nodes fucntion"""
 
-        if self.viewer.dims.last_used == 0: 
+        if self.viewer.dims.last_used == 0 and self.mode == 'selection': 
             self._highlight_selected_nodes()
+
+    def _update_mode(self, mode:str) -> None: 
+        """Update the display mode of the selected_labels layer"""
+
+        self.mode = mode
+        self._highlight_selected_nodes()
+
+    def _set_selected_node(self) -> None:
+        """Make the selected node the active label in self.labels"""
+
+        if len(self.selected_nodes) > 0:
+            self.labels.selected_label = self.selected_nodes[-1]['track_id']
+        else: 
+            self.labels.selected_label = 0
 
     def _highlight_selected_nodes(self) -> None:
         """Highlights labels in the selected_labels layer by changing the opacity"""
 
         if self.base_label_color_dict is not None:           
-            t = self.viewer.dims.current_step[0]
-            nodes = [node for node in self.selected_nodes if node['t'] == t]
-            visible = [node['track_id'] for node in nodes]
-            colormap = update_label_cmap(self.base_label_color_dict, visible = visible)           
+            if self.mode == 'selection':
+                t = self.viewer.dims.current_step[0]
+                nodes = [node for node in self.selected_nodes if node['t'] == t]
+                visible = [node['track_id'] for node in nodes]
+            elif self.mode == 'track':
+                visible = [self.labels.selected_label]  
+            elif self.mode == 'lineage':
+                node_id = self.track_df.loc[self.track_df['track_id'] == self.labels.selected_label, 'node_id'].iloc[0]
+                lineage_nodes = extract_lineage_tree(self.tracks, node_id)
+                visible = self.track_df[self.track_df['node_id'].isin(lineage_nodes)]['track_id'].unique()
+            else: 
+                if self.volume_viewer is not None: 
+                    if self.volume_viewer.mode == 'plane':
+                        if self.volume_viewer.z_plane_btn.isChecked():
+                            slider_position = self.volume_viewer.z_plane_slider.value()
+                            visible = np.unique(self.labels.data[self.viewer.dims.current_step[0], slider_position, :, :])
+
+                        elif self.volume_viewer.y_plane_btn.isChecked():
+                            slider_position = self.volume_viewer.y_plane_slider.value()
+                            visible = np.unique(self.labels.data[self.viewer.dims.current_step[0], :, slider_position, :])
+
+                        elif self.volume_viewer.x_plane_btn.isChecked():
+                            slider_position = self.volume_viewer.x_plane_slider.value()
+                            visible = np.unique(self.labels.data[self.viewer.dims.current_step[0], :, :, slider_position])
+                    else:
+                        visible = np.unique(self.labels.data[self.viewer.dims.current_step[0]])
+                else:
+                    visible = np.unique(self.labels.data[self.viewer.dims.current_step[0]])
+                   
+            colormap = create_selection_label_cmap(self.base_label_color_dict, visible = visible)           
             self.selected_labels_layer.colormap = colormap
             self.selected_labels_layer.editable = False
             self.selected_labels_layer.mouse_pan = False
             self.selected_labels_layer.mouse_zoom = False
             self.selected_labels_layer.opacity = 0.9     
-                          
+           
     def _on_table_clicked(self, value: str) -> None:
         """Jump to the node selected by the user in the table"""
         
@@ -169,22 +220,35 @@ class TrackAnnotationWidget(QWidget):
         # If the data is 3D (+time), add a points layer and 3D plane view option. Points have to be used for selections, 
         # because direct label selection is not possible in plane mode (you end up selecting the invisible labels on top of it that are only visible in volume mode)
         if len(self.labels.data.shape) == 4: 
-
+            
             self.selected_labels_layer.blending = 'translucent_no_depth'
             self.selected_labels_layer.depiction = 'volume'
-            self.plane_slider = VolumeModeWidget(
-                self.viewer, 
-                self.track_df,
-                self.labels, 
-                self.tracks_layer,
-                self.selected_labels_layer, 
-                self.selected_nodes,
-            )
+            colormap = create_selection_label_cmap(self.base_label_color_dict, visible = [])           
+            self.selected_labels_layer.colormap = colormap
             self.viewer.dims.ndisplay = 3
-            self.layout.insertWidget(0, self.plane_slider)
-       
+
+            # check if widget exists already from previous run
+            if self.volume_viewer is None: 
+                self.volume_viewer = VolumeModeWidget(
+                    self.viewer, 
+                    self.track_df,
+                    self.labels, 
+                    self.tracks_layer,
+                    self.selected_labels_layer, 
+                    self.selected_nodes,
+                )
+                self.layout.insertWidget(0, self.volume_viewer)
+            else: 
+                self.volume_viewer._update(
+                    self.viewer, 
+                    self.track_df,
+                    self.labels, 
+                    self.tracks_layer,
+                    self.selected_labels_layer, 
+                    self.selected_nodes,
+                )
         else: 
-            # add callback to clicking on the labels layer to select cells in the pyqtgraph 
+            # add callback to clicking directly on the labels layer to select cells in the pyqtgraph 
             @self.labels.mouse_drag_callbacks.append
             def click(layer, event):
                 if event.type == 'mouse_press':  # Check if the event is a mouse press event

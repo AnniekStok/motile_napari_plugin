@@ -243,11 +243,33 @@ def create_label_color_dict(labels: List[int], labels_layer: napari.layers.Label
 
     return color_dict_rgb      
 
-def update_label_cmap(color_dict_rgb: Dict, visible: List[int]) -> DirectLabelColormap:
+def create_selection_label_cmap(color_dict_rgb: Dict, visible: List[int]) -> DirectLabelColormap:
     """Generates a label colormap with only a selection visible"""
 
     color_dict_rgb_temp = copy.deepcopy(color_dict_rgb)
     for label in visible:
-        color_dict_rgb_temp[label][-1] = 1 # set opacity to full
+        if label != 0:
+            color_dict_rgb_temp[label][-1] = 1 # set opacity to full
     
     return DirectLabelColormap(color_dict=color_dict_rgb_temp)
+
+def extract_lineage_tree(graph: nx.DiGraph, node_id: str) -> List:
+    """Extract the entire lineage tree including horizontal relations for a given node"""
+
+    # go up the tree to identify the root node
+    root_node = node_id
+    while True:
+        predecessors = list(graph.predecessors(root_node))
+        if not predecessors:
+            break
+        root_node = predecessors[0]
+
+    # extract all descendants to get the full tree
+    nodes = nx.descendants(graph, root_node)
+
+    # include root
+    nodes.add(root_node)
+
+    return list(nodes)
+    
+   

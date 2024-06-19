@@ -21,7 +21,26 @@ class PointTracker:
         self.lines.editable = False
         self.lines.mouse_pan = False
         self.lines.mouse_zoom = False
-                
+
+    def _update(self, df:pd.DataFrame, viewer: napari.Viewer):
+        """Update the points and lines layers"""
+
+        self.df = df
+        self.viewer = viewer
+        self.display = 'single' # toggle between 'single' for showing just the points for the current time point and 'combined' for also showing the points for t+1
+
+        self.viewer.layers.remove(self.points) # remove old layers
+        self.viewer.layers.remove(self.lines) 
+
+        self.points = self.construct_points()
+        self.points.editable = False
+
+        self.lines = self.construct_lines()  
+        self.lines.visible = False
+        self.lines.editable = False
+        self.lines.mouse_pan = False
+        self.lines.mouse_zoom = False
+
     def construct_lines(self) -> napari.layers.Shapes:
         """Construct a shapes layer consisting of lines connecting the points from different time points"""
         

@@ -59,6 +59,8 @@ class TreeWidget(QWidget):
         """Redraw the pyqtgraph object with the given tracks dataframe"""
 
         self.track_df = tracks
+        self.forks = forks
+        self.endpoints = endpoints
         pos = []
         pos_colors = []
         adj = []
@@ -67,11 +69,11 @@ class TreeWidget(QWidget):
         sizes = []
 
         for _, node in self.track_df.iterrows():      
-            if node['node_id'] in forks:
+            if node['node_id'] in self.forks:
                 symbols.append('t')
                 pos_colors.append([255, 0, 0, 255]) # edits displayed in red
                 sizes.append(13)
-            elif node['node_id'] in endpoints:
+            elif node['node_id'] in self.endpoints:
                 symbols.append('x')
                 pos_colors.append([255, 0, 0, 255]) # edits displayed in red
                 sizes.append(13)
@@ -120,7 +122,7 @@ class TreeWidget(QWidget):
                 self.endpoints.remove(node['node_id'])
             
             self.forks.append(node['node_id'])
-        
+                    
         elif edit == 'Close': 
             self.symbols[node['index']] = 'x'
             self.size[node['index']] = 13
@@ -129,7 +131,7 @@ class TreeWidget(QWidget):
             if node['node_id'] in self.forks: 
                 self.forks.remove(node['node_id'])
 
-            self.endpoints.append(node['node_id'])
+            self.endpoints.append(node['node_id'])          
         
         else: 
             # reset node
