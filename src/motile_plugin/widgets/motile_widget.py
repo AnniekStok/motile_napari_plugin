@@ -22,6 +22,7 @@ from .track_annotator import TrackAnnotationWidget
 
 logger = logging.getLogger(__name__)
 
+
 class MotileWidget(QWidget):
     """The main widget for the motile napari plugin. Coordinates sub-widgets
     and calls the back-end motile solver.
@@ -122,10 +123,10 @@ class MotileWidget(QWidget):
         self.edit_run_widget.hide()
         self.view_run_widget.show()
         self.update_napari_layers(run)
-        if run.tracks is not None: 
+        if run.tracks is not None:
             self.track_annotator._update(
                 run.tracks, self.output_seg_layer, self.tracks_layer
-            ) # make a call to update track annotator widget
+            )  # make a call to update track annotator widget
 
     def edit_run(self, run: MotileRun | None):
         """Create or edit a new run in the run editor. Also removes solution layers
@@ -175,7 +176,7 @@ class MotileWidget(QWidget):
             lambda event_data: self._on_solver_event(run, event_data),
             run.pinned_edges,
             run.forked_nodes,
-            run.endpoint_nodes
+            run.endpoint_nodes,
         )
         run.output_segmentation = relabel_segmentation(
             run.tracks, run.input_segmentation

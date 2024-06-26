@@ -167,7 +167,7 @@ class RunEditor(QGroupBox):
         run_name = self.run_name.text()
         input_seg = self.get_labels_data()
         pins = self.track_annotator._get_pins()
-        
+
         if input_seg is None:
             warn("No input labels layer selected", stacklevel=2)
             return None
@@ -178,9 +178,9 @@ class RunEditor(QGroupBox):
             run_name=run_name,
             solver_params=params,
             input_segmentation=input_seg,
-            pinned_edges = pins,
-            forked_nodes = self.track_annotator.forks,
-            endpoint_nodes = self.track_annotator.endpoints,
+            pinned_edges=pins,
+            forked_nodes=self.track_annotator.forks,
+            endpoint_nodes=self.track_annotator.endpoints,
         )
 
     def emit_run(self) -> None:

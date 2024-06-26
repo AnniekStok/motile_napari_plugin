@@ -1,23 +1,28 @@
-import pyqtgraph            as pg
-from PyQt5.QtCore           import pyqtSignal, QObject, Qt
-from .tree_widget_utils     import normalize_modifiers
-from typing                 import Tuple
+from typing import Tuple
+
+import pyqtgraph as pg
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
+
+from .tree_widget_utils import normalize_modifiers
+
 
 class NodeSelectionList(QObject):
     """Updates the current selection (0, 1, or 2) of nodes. Sends a signal on every update."""
-    
-    list_updated = pyqtSignal() 
+
+    list_updated = pyqtSignal()
 
     def __init__(self):
-        super(NodeSelectionList, self).__init__() 
+        super().__init__()
         self._list = []
 
-    def append(self, item, modifiers: Qt.KeyboardModifiers | Tuple | None = None):
+    def append(
+        self, item, modifiers: Qt.KeyboardModifiers | Tuple | None = None
+    ):
         """Append or replace an item to the list, depending on the number of items present and the keyboard modifiers used. Emit update signal"""
-        
+
         if len(self) == 2:
             self._list = []
-        
+
         if isinstance(modifiers, tuple):
             modifiers = normalize_modifiers(modifiers)
 
@@ -28,16 +33,16 @@ class NodeSelectionList(QObject):
         # replace item in list
         else:
             self._list = []
-            self._list.append(item)        
+            self._list.append(item)
 
         # emit update signal
         self.list_updated.emit()
-     
+
     def flip(self):
         """Change the order of the items in the list"""
-        if len(self) == 2: 
+        if len(self) == 2:
             self._list = [self._list[1], self._list[0]]
-    
+
     def reset(self):
         """Empty list and emit update signal"""
         self._list = []
@@ -45,6 +50,6 @@ class NodeSelectionList(QObject):
 
     def __getitem__(self, index):
         return self._list[index]
-    
+
     def __len__(self):
         return len(self._list)
