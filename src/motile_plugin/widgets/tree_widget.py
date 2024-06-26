@@ -29,6 +29,7 @@ class TreeWidget(QWidget):
         self.tree_widget.setTitle("Lineage Tree")
         self.tree_widget.setLabel("left", text="Time Point")
         self.tree_widget.getAxis("bottom").setStyle(showValues=False)
+        self.tree_widget.invertY(True) # to show tracks from top to bottom
         self.g = pg.GraphItem()
         self.g.scatter.sigClicked.connect(self._on_click)
         self.tree_widget.addItem(self.g)
