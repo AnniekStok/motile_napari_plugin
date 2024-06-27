@@ -1,57 +1,91 @@
 import napari.layers
 import numpy as np
-import pandas as pd
-
+from .track_data import TrackData
+from .node_selection import NodeSelectionList
 
 class PointTracker:
     """Constructs a point layer for 3D + time data, displaying points at the current timepoint, or current timepoint + 1.
     Also constructs a shapes layer consisting of lines between the points from different time points.
     """
 
-    def __init__(self, df: pd.DataFrame, viewer: napari.Viewer):
+    def __init__(self, track_data: TrackData, selected_nodes: NodeSelectionList, viewer: napari.Viewer):
 
-        self.df = df
+        self.track_data = track_data
         self.viewer = viewer
-        self.display = "single"  # toggle between 'single' for showing just the points for the current time point and 'combined' for also showing the points for t+1
+        self.selected_nodes = selected_nodes
 
-        self.points = self.construct_points()
-        self.points.editable = False
+        self.points = None
+        self.lines = None
 
-        self.lines = self.construct_lines()
-        self.lines.visible = False
-        self.lines.editable = False
-        self.lines.mouse_pan = False
-        self.lines.mouse_zoom = False
+        self._update()
 
-    def _update(self, df: pd.DataFrame, viewer: napari.Viewer):
+    def _update(self) -> None:
         """Update the points and lines layers"""
 
-        self.df = df
-        self.viewer = viewer
         self.display = "single"  # toggle between 'single' for showing just the points for the current time point and 'combined' for also showing the points for t+1
 
-        self.viewer.layers.remove(self.points)  # remove old layers
-        self.viewer.layers.remove(self.lines)
+        if self.points in self.viewer.layers:
+            self.viewer.layers.remove(self.points)  # remove old layers
+        if self.lines in self.viewer.layers: 
+            self.viewer.layers.remove(self.lines)
 
-        self.points = self.construct_points()
+        self.points = self._construct_points()
         self.points.editable = False
 
-        self.lines = self.construct_lines()
+        @self.points.mouse_drag_callbacks.append
+        def click(layer, event):
+            if event.type == "mouse_press":
+                point_index = layer.get_value(
+                    event.position,
+                    view_direction=event.view_direction,
+                    dims_displayed=event.dims_displayed,
+                    world=True,
+                )
+                if point_index is not None:
+                    node_id = layer.properties["node_id"][point_index]
+                    node_df = self.track_data.df[
+                        (self.track_data.df["node_id"] == node_id)
+                    ]
+                    if not node_df.empty:
+                        node = node_df.iloc[
+                            0
+                        ].to_dict()  # Convert the filtered result to a dictionary
+                        self.selected_nodes.append(node, event.modifiers)
+
+        self.lines = self._construct_lines()
         self.lines.visible = False
         self.lines.editable = False
         self.lines.mouse_pan = False
         self.lines.mouse_zoom = False
+    
+    def _user_update(self, node_id: str, edit: str) -> None:
+        """Handle user edit, update the point visualization"""
 
-    def construct_lines(self) -> napari.layers.Shapes:
+        # extract the index to update
+        indices = self.track_data.df.index[self.track_data.df['node_id'] == node_id].tolist()
+        if len(indices) > 0:
+            row_index = indices[0]
+            if edit == "fork":
+                self.points.symbol[row_index] = 'triangle_down'
+                self.points.face_color[row_index] = np.array([1, 0, 0, 1])
+            if edit == 'endpoint':
+                self.points.symbol[row_index] = 'x'
+                self.points.face_color[row_index] = np.array([1, 0, 0, 1])
+            if edit == 'intermittent':
+                self.points.symbol[row_index] = 'disc'
+                self.points.face_color[row_index] = self.track_data.df.loc[row_index, 'color'] / 255
+            self.points.refresh()
+
+    def _construct_lines(self) -> napari.layers.Shapes:
         """Construct a shapes layer consisting of lines connecting the points from different time points"""
 
         # Create lines between points at t and t+1
         lines = []
         self.line_colors = []
         track_ids = []
-        for _, node in self.df.iterrows():
+        for _, node in self.track_data.df.iterrows():
             parent = node["parent_id"]
-            parent_df = self.df[self.df["node_id"] == parent]
+            parent_df = self.track_data.df[self.track_data.df["node_id"] == parent]
             if not parent_df.empty:
                 parent_dict = parent_df.iloc[0]
                 start_point = [
@@ -60,7 +94,7 @@ class PointTracker:
                     parent_dict["x"],
                 ]
                 end_point = [parent_dict["t"], node["y"], node["x"]]
-                if "z" in self.df.columns:
+                if "z" in self.track_data.df.columns:
                     start_point.insert(1, parent_dict["z"])
                     end_point.insert(1, node["z"])
 
@@ -78,87 +112,43 @@ class PointTracker:
             properties=line_properties,
         )
 
-    def construct_points(self) -> napari.layers.Points:
+    def _construct_points(self) -> napari.layers.Points:
         """Create a point layer for the nodes in the table, showing t and t+1 with different opacities."""
 
-        # Collect point data per time point
-        self.colors_t = np.array(self.df["color"].tolist()) / 255
-        node_ids = self.df["node_id"].values
-        track_ids = self.df["track_id"].values
-        self.properties = {"node_id": node_ids, "track_id": track_ids}
-        if "z" in self.df.columns:
-            self.points_t = np.column_stack(
+        edge_color = 'white'
+        name = 'new_run_points'
+        
+        # Collect point data, colors and symbols directly from the track_data dataframe
+        colors = np.array(self.track_data.df["color"].tolist()) / 255
+        annotate_indices = self.track_data.df[self.track_data.df['annotated'] == True].index # manual edits should be displayed in a different color
+        colors[annotate_indices] = np.array([1, 0, 0, 1])
+        symbols = np.array(self.track_data.df['symbol'].tolist())
+        node_ids = self.track_data.df["node_id"].values
+        track_ids = self.track_data.df["track_id"].values
+        properties = {"node_id": node_ids, "track_id": track_ids}
+
+        if "z" in self.track_data.df.columns:
+            points = np.column_stack(
                 (
-                    self.df["t"].values,
-                    self.df["z"].values,
-                    self.df["y"].values,
-                    self.df["x"].values,
+                    self.track_data.df["t"].values,
+                    self.track_data.df["z"].values,
+                    self.track_data.df["y"].values,
+                    self.track_data.df["x"].values,
                 )
             )
         else:
-            self.points_t = self.df[["t", "y", "x"]].values
-
-        # Create additional points for t+1 and combine
-        df_shift = self.df.copy()
-        df_shift["t"] -= 1
-
-        min_t = self.df["t"].min()
-        max_t = self.df["t"].max()
-        df_shift = df_shift[
-            (df_shift["t"] >= min_t) & (df_shift["t"] <= max_t)
-        ]
-        colors_shift = np.array(df_shift["color"].tolist()) / 255
-        node_ids_shift = df_shift["node_id"].values
-        track_ids_shift = df_shift["track_id"].values
-        if "z" in df_shift.columns:
-            points_shift = np.column_stack(
-                (
-                    df_shift["t"].values,
-                    df_shift["z"].values,
-                    df_shift["y"].values,
-                    df_shift["x"].values,
-                )
-            )
-        else:
-            points_shift = df_shift[["t", "y", "x"]].values
-
-        self.combined_points = np.vstack((self.points_t, points_shift))
-        self.combined_colors = np.vstack((self.colors_t, colors_shift))
-        self.combined_properties = {
-            "node_id": np.concatenate((node_ids, node_ids_shift)),
-            "track_id": np.concatenate((track_ids, track_ids_shift)),
-        }
-
-        # Set different opacity and edge colors for the combined points
-        self.combined_opacities = np.array(
-            [1] * len(self.points_t) + [0.5] * len(points_shift)
-        )
-        self.combined_edge_colors = np.array(
-            ["white"] * len(self.points_t) + ["black"] * len(points_shift)
-        )
-        self.combined_colors[:, 3] = self.combined_opacities
+            points = self.track_data.df[["t", "y", "x"]].values
 
         # Add points layer (single time point) to the Napari viewer
         return self.viewer.add_points(
-            self.points_t,
-            edge_color="white",
-            properties=self.properties,
-            face_color=self.colors_t,
+            points,
+            name = name,
+            edge_color=edge_color,
+            properties=properties,
+            face_color=colors,
             size=5,
+            symbol = symbols,
         )
 
-    def _switch_mode(self, mode: str):
-        """Switch between displaying data for a single time point or for two time points combined"""
 
-        if mode == "combined":
-            self.points.data = self.combined_points
-            self.points.edge_color = self.combined_edge_colors
-            self.points.properties = self.combined_properties
-            self.points.face_color = self.combined_colors
-            self.lines.visible = True
-        if mode == "single":
-            self.points.data = self.points_t
-            self.points.edge_color = "white"
-            self.points.properties = self.properties
-            self.points.face_color = self.colors_t
-            self.lines.visible = False
+

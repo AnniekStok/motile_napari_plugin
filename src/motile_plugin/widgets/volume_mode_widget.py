@@ -35,6 +35,7 @@ class VolumeModeWidget(QWidget):
         tracks: napari.layers.Tracks,
         selected_labels: napari.layers.Labels,
         selected_nodes: NodeSelectionList,
+        point_tracker: PointTracker,
     ):
         super().__init__()
 
@@ -50,30 +51,10 @@ class VolumeModeWidget(QWidget):
         self.selected_nodes = selected_nodes
 
         self.mode = "volume"
-        self.point_tracker = PointTracker(self.track_df, self.viewer)
+        self.point_tracker = point_tracker
         self.point_tracker.points.blending = "translucent_no_depth"
         self.viewer.layers.selection.clear()
         self.viewer.layers.selection.add(self.point_tracker.points)
-
-        @self.point_tracker.points.mouse_drag_callbacks.append
-        def click(layer, event):
-            if event.type == "mouse_press":
-                point_index = layer.get_value(
-                    event.position,
-                    view_direction=event.view_direction,
-                    dims_displayed=event.dims_displayed,
-                    world=True,
-                )
-                if point_index is not None:
-                    node_id = layer.properties["node_id"][point_index]
-                    node_df = self.track_df[
-                        (self.track_df["node_id"] == node_id)
-                    ]
-                    if not node_df.empty:
-                        node = node_df.iloc[
-                            0
-                        ].to_dict()  # Convert the filtered result to a dictionary
-                        self.selected_nodes.append(node, event.modifiers)
 
         self.viewer.dims.events.ndisplay.connect(self.on_ndisplay_changed)
         view_mode_widget_layout = QVBoxLayout()
@@ -91,14 +72,7 @@ class VolumeModeWidget(QWidget):
         self.volume_btn.clicked.connect(self._set_volume_mode)
         plane_volume_layout.addWidget(self.plane_btn)
         plane_volume_layout.addWidget(self.volume_btn)
-
-        self.show_combined_timepoints_cb = QCheckBox("Show points t+1")
-        self.show_combined_timepoints_cb.stateChanged.connect(
-            self._show_combined_timepoints
-        )
-
         button_layout.addLayout(plane_volume_layout)
-        button_layout.addWidget(self.show_combined_timepoints_cb)
 
         # Add plane sliders for viewing in 3D
         z_layout = QVBoxLayout()
@@ -196,46 +170,6 @@ class VolumeModeWidget(QWidget):
         self.selected_nodes = selected_nodes
 
         self.mode = "volume"
-        self.point_tracker._update(self.track_df, self.viewer)
-        self.point_tracker.points.blending = "translucent_no_depth"
-        self.viewer.layers.selection.clear()
-        self.viewer.layers.selection.add(self.point_tracker.points)
-
-        @self.point_tracker.points.mouse_drag_callbacks.append
-        def click(layer, event):
-            if event.type == "mouse_press":
-                point_index = layer.get_value(
-                    event.position,
-                    view_direction=event.view_direction,
-                    dims_displayed=event.dims_displayed,
-                    world=True,
-                )
-                if point_index is not None:
-                    node_id = layer.properties["node_id"][point_index]
-                    node_df = self.track_df[
-                        (self.track_df["node_id"] == node_id)
-                    ]
-                    if not node_df.empty:
-                        node = node_df.iloc[
-                            0
-                        ].to_dict()  # Convert the filtered result to a dictionary
-                        self.selected_nodes.append(node, event.modifiers)
-
-    def _show_combined_timepoints(self):
-        """Switch between showing only the points for the current time point or both the currrent and next time point"""
-
-        if self.show_combined_timepoints_cb.isChecked():
-            self.point_tracker._switch_mode("combined")
-        else:
-            self.point_tracker._switch_mode("single")
-
-        if self.mode == "plane":
-            if self.z_plane_btn.isChecked():
-                self._set_plane(axis="z")
-            elif self.y_plane_btn.isChecked():
-                self._set_plane(axis="y")
-            elif self.x_plane_btn.isChecked():
-                self._set_plane(axis="x")
 
     def _set_plane_mode(self) -> None:
         """Set the mode to plane, enable slider and change depiction to 'plane' for Image and Labels layers"""
@@ -288,7 +222,7 @@ class VolumeModeWidget(QWidget):
                 layer.rendering = "iso_categorical"
 
         # show all the points in volume mode
-        self.point_tracker.points.shown = True
+        self.point_tracker.points.shown = True # fix this, point tracker has been moved
 
     def on_ndisplay_changed(self) -> None:
         """Update the buttons depending on the display mode of the viewer. Buttons and slider should only be active in 3D mode"""

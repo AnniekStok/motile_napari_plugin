@@ -7,6 +7,7 @@ import numpy as np
 from qtpy.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ..utils.node_selection import NodeSelectionList
+from ..utils.track_data import TrackData
 from ..utils.tree_widget_utils import (
     bind_key_with_condition,
     create_colormap,
@@ -14,15 +15,14 @@ from ..utils.tree_widget_utils import (
     create_selection_label_cmap,
     extract_lineage_tree,
     extract_sorted_tracks,
-    get_existing_forks_endpoints,
     get_existing_pins,
 )
 from .custom_table_widget import TableWidget
 from .edit_button_widget import AnnotationButtons
-from .mode_selection_widget import SelectMode
+from .display_mode_selection_widget import SelectMode
 from .tree_widget import TreeWidget
 from .volume_mode_widget import VolumeModeWidget
-
+from ..utils.point_tracker import PointTracker
 
 class TrackAnnotationWidget(QWidget):
     """Widget for interactive annotation of tracking results.
@@ -36,21 +36,22 @@ class TrackAnnotationWidget(QWidget):
         self.viewer = viewer
         self.viewer.dims.events.current_step.connect(self._check_dim_changed)
 
+        self.track_data = TrackData()
+        self.track_data.data_updated.connect(self._user_update)
+
+        self.point_tracker = None
+
         self.selected_nodes = NodeSelectionList()
         self.selected_nodes.list_updated.connect(self._set_selected_node)
         self.selected_nodes.list_updated.connect(self._set_current_step)
         self.selected_nodes.list_updated.connect(
             self._highlight_selected_nodes
         )
-        self.forks = []
-        self.endpoints = []
         self.base_label_color_dict = None
         self.mode = "selection"
 
         # construct tree widget and buttons that reactively respond to changes in the selection of nodes
-        self.tree_widget = TreeWidget(
-            self.selected_nodes, self.forks, self.endpoints
-        )
+        self.tree_widget = TreeWidget(self.selected_nodes, self.track_data)
         self.mode_widget = SelectMode()
         self.mode_widget.mode_updated.connect(self._update_mode)
         self.edit_buttons = AnnotationButtons(self.selected_nodes)
@@ -164,13 +165,13 @@ class TrackAnnotationWidget(QWidget):
             elif self.mode == "track":
                 visible = [self.labels.selected_label]
             elif self.mode == "lineage":
-                node_id = self.track_df.loc[
-                    self.track_df["track_id"] == self.labels.selected_label,
+                node_id = self.track_data.df.loc[
+                    self.track_data.df["track_id"] == self.labels.selected_label,
                     "node_id",
                 ].iloc[0]
                 lineage_nodes = extract_lineage_tree(self.tracks, node_id)
-                visible = self.track_df[
-                    self.track_df["node_id"].isin(lineage_nodes)
+                visible = self.track_data.df[
+                    self.track_data.df["node_id"].isin(lineage_nodes)
                 ]["track_id"].unique()
             else:
                 if self.volume_viewer is not None:
@@ -235,12 +236,18 @@ class TrackAnnotationWidget(QWidget):
         """Jump to the node selected by the user in the table"""
 
         if value not in ["Add", "Break"]:
-            node_df = self.track_df[self.track_df["node_id"] == value]
+            node_df = self.track_data.df[self.track_data.df["node_id"] == value]
             if not node_df.empty:
                 node = node_df.iloc[
                     0
                 ].to_dict()  # Convert the filtered result to a dictionary
                 self.selected_nodes.append(node)
+
+    def _user_update(self, node_id: str, edit: str):
+        """Forward the user edit to the points layer"""
+
+        if self.point_tracker is not None: 
+            self.point_tracker._user_update(node_id, edit)
 
     def _edit_edge(self, edit: str) -> None:
         """Add a new action (make or break an edge) to the table"""
@@ -269,22 +276,19 @@ class TrackAnnotationWidget(QWidget):
 
         # construct track_df dataframe holding all information needed to update the pyqtgraph
         self.tracks = graph
-        self.track_df = extract_sorted_tracks(graph, labels)
+        self.track_data._update_data(extract_sorted_tracks(graph, labels))
 
         # retrieve existing pins, forks and endpoints from the track data
         self.pins = get_existing_pins(self.tracks)
-        self.forks, self.endpoints = get_existing_forks_endpoints(self.tracks)
 
         # call the update function on the tree widget
-        self.tree_widget._update(
-            self.track_df, self.pins, self.forks, self.endpoints
-        )
+        self.tree_widget._update(self.pins)
 
         # update label visualization (additional labels layer will be created to highlight the selected labels)
         self.labels = labels
         self.labels.opacity = 0.6
         self.base_label_color_dict = create_label_color_dict(
-            labels=self.track_df["track_id"].unique(), labels_layer=self.labels
+            labels=self.track_data.df["track_id"].unique(), labels_layer=self.labels
         )
 
         # update the tracks_layer with the same colors as the labels layer
@@ -306,6 +310,12 @@ class TrackAnnotationWidget(QWidget):
         self.selected_labels_layer.mouse_zoom = False
         self.selected_labels_layer.opacity = 0.9
 
+        # initiate point tracker
+        if self.point_tracker is None: 
+            self.point_tracker = PointTracker(self.track_data, self.selected_nodes, self.viewer)
+        else: 
+            self.point_tracker._update()
+
         # If the data is 3D (+time), add a points layer and 3D plane view option. Points have to be used for selections,
         # because direct label selection is not possible in plane mode (you end up selecting the invisible labels on top of it that are only visible in volume mode)
         if len(self.labels.data.shape) == 4:
@@ -322,23 +332,25 @@ class TrackAnnotationWidget(QWidget):
             if self.volume_viewer is None:
                 self.volume_viewer = VolumeModeWidget(
                     self.viewer,
-                    self.track_df,
+                    self.track_data.df,
                     self.labels,
                     self.tracks_layer,
                     self.selected_labels_layer,
                     self.selected_nodes,
+                    self.point_tracker,
                 )
                 self.layout.insertWidget(0, self.volume_viewer)
             else:
                 self.volume_viewer._update(
                     self.viewer,
-                    self.track_df,
+                    self.track_data.df,
                     self.labels,
                     self.tracks_layer,
                     self.selected_labels_layer,
                     self.selected_nodes,
                 )
         else:
+
             # add callback to clicking directly on the labels layer to select cells in the pyqtgraph
             @self.labels.mouse_drag_callbacks.append
             def click(layer, event):
@@ -352,15 +364,17 @@ class TrackAnnotationWidget(QWidget):
                         dims_displayed=event.dims_displayed,
                         world=True,
                     )
-                    node_df = self.track_df[
-                        (self.track_df["t"] == int(position[0]))
-                        & (self.track_df["track_id"] == int(value))
-                    ]
-                    if not node_df.empty:
-                        node = node_df.iloc[
-                            0
-                        ].to_dict()  # Convert the filtered result to a dictionary
-                        self.selected_nodes.append(node, event.modifiers)
+
+                    if value is not None:
+                        node_df = self.track_data.df[
+                            (self.track_data.df["t"] == int(position[0]))
+                            & (self.track_data.df["track_id"] == int(value))
+                        ]
+                        if not node_df.empty:
+                            node = node_df.iloc[
+                                0
+                            ].to_dict()  # Convert the filtered result to a dictionary
+                            self.selected_nodes.append(node, event.modifiers)
 
             self.viewer.layers.selection.clear()
             self.viewer.layers.selection.add(self.labels)
@@ -396,3 +410,15 @@ class TrackAnnotationWidget(QWidget):
             self.edit_buttons.reset_btn,
             partial(self.tree_widget._edit_node, edit="Reset"),
         )
+
+    def _get_forks_endpoints(self) -> tuple[list[str], list[str]]:
+        """Extract the node_ids that have a fork or endpoint annotation"""
+
+        if not self.track_data.df.empty:
+            forks = self.track_data.df[(self.track_data.df['state'] == 'fork') & (self.track_data.df['annotated'] == True)]['node_id'].tolist()
+            endpoints = self.track_data.df[(self.track_data.df['state'] == 'endpoint') & (self.track_data.df['annotated'] == True)]['node_id'].tolist()
+        else: 
+            forks = []
+            endpoints = []
+
+        return forks, endpoints

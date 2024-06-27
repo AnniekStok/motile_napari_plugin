@@ -40,6 +40,7 @@ def extract_sorted_tracks(
 
     # Identify parent nodes (nodes with more than one child)
     parent_nodes = [n for (n, d) in solution_nx_graph.out_degree() if d > 1]
+    end_nodes = [n for (n, d) in solution_nx_graph.out_degree() if d == 0]
 
     # Make a copy of the graph and remove outgoing edges from parent nodes to isolate tracks
     soln_copy = solution_nx_graph.copy()
@@ -56,10 +57,31 @@ def extract_sorted_tracks(
                 NodeAttr.TIME.value
             ],
         )
+
         parent_track_id = None
         for node in sorted_nodes:
             node_data = solution_nx_graph.nodes[node]
             pos = node_data[NodeAttr.POS.value]
+            annotated = False
+            if node in parent_nodes: 
+                state = 'fork' # can we change this to NodeAttr.STATE.value or equivalent? 
+                symbol = "triangle_down"
+            elif node in end_nodes: 
+                state = 'endpoint' # can we change this to NodeAttr.STATE.value or equivalent? 
+                symbol = "x"
+            else:
+                state = 'intermittent'
+                symbol = "disc"
+            
+            # also check for manual annotations
+            if node_data.get('fork') is True:
+                state = 'fork' # can we change this to NodeAttr.STATE.value or equivalent? 
+                symbol = "triangle_down"
+                annotated = True
+            if node_data.get('endpoint') is True:
+                state = 'endpoint' # can we change this to NodeAttr.STATE.value or equivalent? 
+                symbol = "x"
+                annotated = True
 
             track_dict = {
                 "t": node_data[NodeAttr.TIME.value],
@@ -71,6 +93,10 @@ def extract_sorted_tracks(
                 "index": counter,
                 "parent_id": 0,
                 "parent_track_id": 0,
+                "state": state,
+                "symbol": symbol,
+                "selected": True,
+                "annotated": annotated,
             }
 
             if len(pos) == 3:
@@ -164,32 +190,6 @@ def get_existing_pins(solution_nx_graph: nx.DiGraph) -> List[Tuple[str, str]]:
             pinned_edges.append((u, v))
 
     return pinned_edges
-
-
-def get_existing_forks_endpoints(
-    solution_nx_graph: nx.DiGraph,
-) -> Tuple[List[str], List[str]]:
-    """Extract a list with fork (dividing) nodes and endpoint (dead) nodes
-
-    Args:
-        solution_nx_graph (nx.DiGraph): NetworkX graph with the solution to use
-        for relabeling.
-
-    Returns:
-        tuple: Tuple of lists containing the node_ids for fork and endpoint nodes.
-
-    """
-
-    forks = []
-    endpoints = []
-    for n, data in solution_nx_graph.nodes(data=True):
-        if data.get("fork") is True:
-            forks.append(n)
-        if data.get("endpoint") is True:
-            endpoints.append(n)
-
-    return forks, endpoints
-
 
 def bind_key_with_condition(
     viewer: Viewer,

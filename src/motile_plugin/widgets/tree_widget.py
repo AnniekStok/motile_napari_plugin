@@ -7,21 +7,19 @@ from PyQt5.QtGui import QMouseEvent
 from qtpy.QtWidgets import QHBoxLayout, QWidget
 
 from ..utils.node_selection import NodeSelectionList
+from ..utils.track_data import TrackData
 
 
 class TreeWidget(QWidget):
     """pyqtgraph-based widget for lineage tree visualization and interactive annotation of nodes and edges"""
 
     def __init__(
-        self, selected_nodes: NodeSelectionList, forks: List, endpoints: List
-    ):
+        self, selected_nodes: NodeSelectionList, track_data: TrackData):
         super().__init__()
 
         self.selected_nodes = selected_nodes
         self.selected_nodes.list_updated.connect(self._show_selected)
-
-        self.forks = forks
-        self.endpoints = endpoints
+        self.track_data = track_data
 
         # Construct the tree view pyqtgraph widget
         layout = QHBoxLayout()
@@ -45,7 +43,7 @@ class TreeWidget(QWidget):
         index = clicked_point.index()  # Get the index of the clicked point
 
         # find the corresponding element in the list of dicts
-        node_df = self.track_df[self.track_df["index"] == index]
+        node_df = self.track_data.df[self.track_data.df["index"] == index]
         if not node_df.empty:
             # extract the selected node
             node = node_df.iloc[
@@ -71,14 +69,9 @@ class TreeWidget(QWidget):
             pen=self.pen,
         )
 
-    def _update(
-        self, tracks: pd.DataFrame, pins: List, forks: List, endpoints: List
-    ) -> None:
+    def _update(self, pins: List) -> None:
         """Redraw the pyqtgraph object with the given tracks dataframe"""
 
-        self.track_df = tracks
-        self.forks = forks
-        self.endpoints = endpoints
         pos = []
         pos_colors = []
         adj = []
@@ -86,24 +79,25 @@ class TreeWidget(QWidget):
         symbols = []
         sizes = []
 
-        for _, node in self.track_df.iterrows():
-            if node["node_id"] in self.forks:
-                symbols.append("t")
-                pos_colors.append([255, 0, 0, 255])  # edits displayed in red
-                sizes.append(13)
-            elif node["node_id"] in self.endpoints:
-                symbols.append("x")
-                pos_colors.append([255, 0, 0, 255])  # edits displayed in red
-                sizes.append(13)
+        for _, node in self.track_data.df.iterrows():
+            if node['symbol'] == 'triangle_down':
+                symbols.append('t')
+            elif node['symbol'] == 'x':
+                symbols.append('x')
             else:
                 symbols.append("o")
+            
+            if node['annotated']:
+                pos_colors.append([255, 0, 0, 255]) # edits displayed in red
+                sizes.append(13)
+            else:
                 pos_colors.append(node["color"])
                 sizes.append(8)
 
             pos.append([node["x_axis_pos"], node["t"]])
             parent = node["parent_id"]
             if parent != 0:
-                parent_df = self.track_df[self.track_df["node_id"] == parent]
+                parent_df = self.track_data.df[self.track_data.df["node_id"] == parent]
                 if not parent_df.empty:
                     parent_dict = parent_df.iloc[0]
                     adj.append([parent_dict["index"], node["index"]])
@@ -146,32 +140,21 @@ class TreeWidget(QWidget):
             self.symbols[node["index"]] = "t"
             self.size[node["index"]] = 13
             self.symbolBrush[node["index"]] = [255, 0, 0, 255]
-
-            if node["node_id"] in self.endpoints:
-                self.endpoints.remove(node["node_id"])
-
-            self.forks.append(node["node_id"])
+            self.track_data._set_fork(node['node_id'])
 
         elif edit == "Close":
             self.symbols[node["index"]] = "x"
             self.size[node["index"]] = 13
             self.symbolBrush[node["index"]] = [255, 0, 0, 255]
+            self.track_data._set_endpoint(node['node_id'])   
 
-            if node["node_id"] in self.forks:
-                self.forks.remove(node["node_id"])
-
-            self.endpoints.append(node["node_id"])
 
         else:
             # reset node
             self.symbols[node["index"]] = "o"
             self.size[node["index"]] = 8
-            self.symbolBrush[node["index"]] = node["color"]
-
-            if node["node_id"] in self.forks:
-                self.forks.remove(node["node_id"])
-            if node["node_id"] in self.endpoints:
-                self.endpoints.remove(node["node_id"])
+            self.symbolBrush[node["index"]] = node["color"]           
+            self.track_data._reset_node(node['node_id'])
 
         self.g.setData(
             pos=self.pos,
@@ -182,3 +165,4 @@ class TreeWidget(QWidget):
             pen=self.pen,
         )
         self.selected_nodes.reset()
+
