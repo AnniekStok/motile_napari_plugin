@@ -1,4 +1,3 @@
-import copy
 from typing import Tuple
 
 import napari.layers
@@ -7,7 +6,6 @@ import pandas as pd
 from qtpy import QtCore
 from qtpy.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -43,11 +41,7 @@ class VolumeModeWidget(QWidget):
         self.track_df = track_df
         self.labels = labels
         self.tracks = tracks
-        self.tracks_data = copy.deepcopy(self.tracks.data)  # store for later
-        self.tracks_props = copy.deepcopy(
-            self.tracks.properties["track_id"]
-        )  # store for later
-        self.selected_labels = selected_labels
+        self.highlighted_labels = selected_labels
         self.selected_nodes = selected_nodes
 
         self.mode = "volume"
@@ -99,7 +93,7 @@ class VolumeModeWidget(QWidget):
         self.z_plane_slider.setEnabled(False)
         self.z_plane_slider.valueChanged.connect(lambda: self._set_plane("z"))
         self.z_plane_slider.setMaximumWidth(20)
-        self.z_plane_slider.setMaximum(self.labels.data.shape[1])
+        self.z_plane_slider.setMaximum(self.labels.data.shape[1] - 1)
         z_layout.addWidget(z_label)
         z_layout.addWidget(self.z_plane_btn)
         z_layout.addWidget(self.z_plane_slider)
@@ -113,7 +107,7 @@ class VolumeModeWidget(QWidget):
         self.y_plane_slider.setEnabled(False)
         self.y_plane_slider.valueChanged.connect(lambda: self._set_plane("y"))
         self.y_plane_slider.setMaximumWidth(20)
-        self.y_plane_slider.setMaximum(self.labels.data.shape[2])
+        self.y_plane_slider.setMaximum(self.labels.data.shape[2] - 1)
         y_layout.addWidget(y_label)
         y_layout.addWidget(self.y_plane_btn)
         y_layout.addWidget(self.y_plane_slider)
@@ -127,7 +121,7 @@ class VolumeModeWidget(QWidget):
         self.x_plane_slider.setEnabled(False)
         self.x_plane_slider.valueChanged.connect(lambda: self._set_plane("x"))
         self.x_plane_slider.setMaximumWidth(20)
-        self.x_plane_slider.setMaximum(self.labels.data.shape[3])
+        self.x_plane_slider.setMaximum(self.labels.data.shape[3] - 1)
         x_layout.addWidget(x_label)
         x_layout.addWidget(self.x_plane_btn)
         x_layout.addWidget(self.x_plane_slider)
@@ -162,11 +156,7 @@ class VolumeModeWidget(QWidget):
         self.track_df = track_df
         self.labels = labels
         self.tracks = tracks
-        self.tracks_data = copy.deepcopy(self.tracks.data)  # store for later
-        self.tracks_props = copy.deepcopy(
-            self.tracks.properties["track_id"]
-        )  # store for later
-        self.selected_labels = selected_labels
+        self.highlighted_labels = selected_labels
         self.selected_nodes = selected_nodes
 
         self.mode = "volume"
@@ -188,7 +178,7 @@ class VolumeModeWidget(QWidget):
             layer
             for layer in self.viewer.layers
             if isinstance(layer, (napari.layers.Labels, napari.layers.Image))
-            and layer != self.selected_labels
+            and layer != self.highlighted_labels
         ]
         for layer in layers:
             layer.depiction = "plane"
@@ -214,15 +204,18 @@ class VolumeModeWidget(QWidget):
             layer
             for layer in self.viewer.layers
             if isinstance(layer, (napari.layers.Labels, napari.layers.Image))
-            and layer != self.selected_labels
+            and layer != self.highlighted_labels
         ]
         for layer in layers:
             layer.depiction = "volume"
             if isinstance(layer, napari.layers.Labels):
                 layer.rendering = "iso_categorical"
 
-        # show all the points in volume mode
-        self.point_tracker.points.shown = True # fix this, point tracker has been moved
+        # show all the points and tracks in volume mode
+        self.point_tracker.points.shown = True
+        self.tracks.track_colors[:, 3] = 1
+        self.tracks.display_graph = True
+        self.tracks.events.rebuild_tracks()  # fire the event to update the colors
 
     def on_ndisplay_changed(self) -> None:
         """Update the buttons depending on the display mode of the viewer. Buttons and slider should only be active in 3D mode"""
@@ -262,7 +255,7 @@ class VolumeModeWidget(QWidget):
             layer
             for layer in self.viewer.layers
             if isinstance(layer, (napari.layers.Labels, napari.layers.Image))
-            and layer != self.selected_labels
+            and layer != self.highlighted_labels
         ]
         for layer in layers:
             if axis == "z":
@@ -285,13 +278,13 @@ class VolumeModeWidget(QWidget):
                 self._set_plane(axis="x")
 
     def _set_plane(self, axis: str) -> None:
-        """Adjusts the plane position of Image and Labels layers. Display only points and lines belonging to the visible labels in this plane"""
+        """Adjusts the plane position of Image and Labels layers. Display only points and tracks belonging to the visible labels in this plane"""
 
         layers = [
             layer
             for layer in self.viewer.layers
             if isinstance(layer, (napari.layers.Labels, napari.layers.Image))
-            and layer != self.selected_labels
+            and layer != self.highlighted_labels
         ]
         for layer in layers:
             pos = layer.plane.position
@@ -322,23 +315,16 @@ class VolumeModeWidget(QWidget):
                     ]
                 )
 
-        # specify which points, lines and tracks to show and which not to show
+        # specify which points and tracks to show and which not to show
         track_ids = self.point_tracker.points.properties["track_id"]
         track_id_mask = np.isin(track_ids, labels_shown)
         self.point_tracker.points.shown = track_id_mask
 
-        track_ids = self.point_tracker.lines.properties["track_id"]
-        track_id_mask = np.isin(track_ids, labels_shown)
-        line_colors = np.array(self.point_tracker.line_colors.copy())
-        line_colors[~track_id_mask, 3] = 0
-        self.point_tracker.lines.edge_color = line_colors.tolist()
-
-        # track_ids = copy.deepcopy(self.tracks_props)
-        # original_track_data = copy.deepcopy(self.tracks_data)
-        # track_id_mask = np.isin(track_ids, labels_shown)
-        # filtered_track_data = original_track_data[track_id_mask]
-        # self.tracks.data = filtered_track_data
-
-        # colormap business still to be fixed
-        # create_selection_colormap(self.labels, 'selected_labels', list(labels_shown))
-        # self.tracks.colormap = 'selected_labels'
+        # update the visible tracks in the tracks_layer
+        track_id_mask = np.isin(
+            self.tracks.properties["track_id"] + 1, labels_shown
+        )
+        self.tracks.track_colors[:, 3] = 0
+        self.tracks.track_colors[track_id_mask, 3] = 1
+        self.tracks.display_graph = False  # do not display the graph here or distracting out of plane white tracks are shown
+        self.tracks.events.rebuild_tracks()  # fire the event to update the colors

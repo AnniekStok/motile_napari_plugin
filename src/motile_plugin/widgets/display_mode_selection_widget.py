@@ -1,9 +1,10 @@
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from qtpy.QtWidgets import (
-    QButtonGroup,
+    QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
-    QRadioButton,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
@@ -12,40 +13,39 @@ from qtpy.QtWidgets import (
 class SelectMode(QWidget):
     """Widget to switch between different display modes: selected node(s), track, lineage, all"""
 
-    mode_updated = pyqtSignal(str)
+    display_updated = pyqtSignal()
+    reset_display = pyqtSignal()
 
     def __init__(self):
         super().__init__()
 
-        mode_box = QGroupBox("Select display mode")
+        mode_box = QGroupBox("Select visible objects [T]")
         mode_box_layout = QVBoxLayout()
 
-        button_group = QButtonGroup()
+        # create a group of checkboxes to apply selection to
+        apply_group_layout = QVBoxLayout()
+        apply_group_layout.addWidget(QLabel("Apply to:"))
+        self.tree_widget_ch = QCheckBox("Lineage Tree")
+        self.tree_widget_ch.stateChanged.connect(self._update_state)
+        self.labels_ch = QCheckBox("Highlighted Labels")
+        self.labels_ch.stateChanged.connect(self._update_state)
+        self.points_ch = QCheckBox("Points")
+        self.points_ch.stateChanged.connect(self._update_state)
+        apply_group_layout.addWidget(self.tree_widget_ch)
+        apply_group_layout.addWidget(self.labels_ch)
+        apply_group_layout.addWidget(self.points_ch)
 
-        selected_nodes_btn = QRadioButton("Selected nodes")
-        track_btn = QRadioButton("Current track")
-        lineage_btn = QRadioButton("Current lineage")
-        all_btn = QRadioButton("All nodes")
+        # Create dropdown menu
+        self.selection_combo = QComboBox()
+        self.selection_combo.addItem("Selected nodes")
+        self.selection_combo.addItem("Current track")
+        self.selection_combo.addItem("Current lineage")
+        self.selection_combo.addItem("Manual edits")
+        self.selection_combo.currentIndexChanged.connect(self._update_display)
 
-        selected_nodes_btn.clicked.connect(
-            lambda: self._update_display("selection")
-        )
-        track_btn.clicked.connect(lambda: self._update_display("track"))
-        lineage_btn.clicked.connect(lambda: self._update_display("lineage"))
-        all_btn.clicked.connect(lambda: self._update_display("all"))
-
-        selected_nodes_btn.setChecked(True)
-
-        button_group.addButton(selected_nodes_btn)
-        button_group.addButton(track_btn)
-        button_group.addButton(lineage_btn)
-        button_group.addButton(all_btn)
-
-        mode_box_layout.addWidget(selected_nodes_btn)
-        mode_box_layout.addWidget(track_btn)
-        mode_box_layout.addWidget(lineage_btn)
-        mode_box_layout.addWidget(all_btn)
-
+        mode_box_layout.addLayout(apply_group_layout)
+        mode_box_layout.addWidget(QLabel("Show:"))
+        mode_box_layout.addWidget(self.selection_combo)
         mode_box.setLayout(mode_box_layout)
 
         main_layout = QHBoxLayout()
@@ -53,7 +53,27 @@ class SelectMode(QWidget):
 
         self.setLayout(main_layout)
 
-    def _update_display(self, mode: str):
-        """Sends a signal to update the mode"""
+    def _update_state(self, state: int):
+        """Send signal depending on whether or not the checkbox was checked or unchecked"""
 
-        self.mode_updated.emit(mode)
+        if state == Qt.Checked:
+            self.display_updated.emit()
+        else:
+            self.reset_display.emit()
+
+    def _update_display(self):
+        """Sends a signal to update the display"""
+
+        self.display_updated.emit()
+
+    def _select_next_display_option(self):
+        """Selects the next button"""
+
+        # Get the current selection
+        checked_id = self.selection_combo.currentIndex()
+        next_id = checked_id + 1
+        if next_id > 4:
+            next_id = 0
+        self.selection_combo.setCurrentIndex(next_id)
+
+        self.display_updated.emit()

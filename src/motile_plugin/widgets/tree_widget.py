@@ -1,7 +1,6 @@
 from typing import List
 
 import numpy as np
-import pandas as pd
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent
 from qtpy.QtWidgets import QHBoxLayout, QWidget
@@ -14,7 +13,8 @@ class TreeWidget(QWidget):
     """pyqtgraph-based widget for lineage tree visualization and interactive annotation of nodes and edges"""
 
     def __init__(
-        self, selected_nodes: NodeSelectionList, track_data: TrackData):
+        self, selected_nodes: NodeSelectionList, track_data: TrackData
+    ):
         super().__init__()
 
         self.selected_nodes = selected_nodes
@@ -27,7 +27,7 @@ class TreeWidget(QWidget):
         self.tree_widget.setTitle("Lineage Tree")
         self.tree_widget.setLabel("left", text="Time Point")
         self.tree_widget.getAxis("bottom").setStyle(showValues=False)
-        self.tree_widget.invertY(True) # to show tracks from top to bottom
+        self.tree_widget.invertY(True)  # to show tracks from top to bottom
         self.g = pg.GraphItem()
         self.g.scatter.sigClicked.connect(self._on_click)
         self.tree_widget.addItem(self.g)
@@ -80,15 +80,15 @@ class TreeWidget(QWidget):
         sizes = []
 
         for _, node in self.track_data.df.iterrows():
-            if node['symbol'] == 'triangle_down':
-                symbols.append('t')
-            elif node['symbol'] == 'x':
-                symbols.append('x')
+            if node["symbol"] == "triangle_up":
+                symbols.append("t1")
+            elif node["symbol"] == "x":
+                symbols.append("x")
             else:
                 symbols.append("o")
-            
-            if node['annotated']:
-                pos_colors.append([255, 0, 0, 255]) # edits displayed in red
+
+            if node["annotated"]:
+                pos_colors.append([255, 0, 0, 255])  # edits displayed in red
                 sizes.append(13)
             else:
                 pos_colors.append(node["color"])
@@ -97,7 +97,9 @@ class TreeWidget(QWidget):
             pos.append([node["x_axis_pos"], node["t"]])
             parent = node["parent_id"]
             if parent != 0:
-                parent_df = self.track_data.df[self.track_data.df["node_id"] == parent]
+                parent_df = self.track_data.df[
+                    self.track_data.df["node_id"] == parent
+                ]
                 if not parent_df.empty:
                     parent_dict = parent_df.iloc[0]
                     adj.append([parent_dict["index"], node["index"]])
@@ -137,24 +139,23 @@ class TreeWidget(QWidget):
         node = self.selected_nodes[0]
 
         if edit == "Fork":
-            self.symbols[node["index"]] = "t"
+            self.symbols[node["index"]] = "t1"
             self.size[node["index"]] = 13
             self.symbolBrush[node["index"]] = [255, 0, 0, 255]
-            self.track_data._set_fork(node['node_id'])
+            self.track_data._set_fork(node["node_id"])
 
         elif edit == "Close":
             self.symbols[node["index"]] = "x"
             self.size[node["index"]] = 13
             self.symbolBrush[node["index"]] = [255, 0, 0, 255]
-            self.track_data._set_endpoint(node['node_id'])   
-
+            self.track_data._set_endpoint(node["node_id"])
 
         else:
             # reset node
             self.symbols[node["index"]] = "o"
             self.size[node["index"]] = 8
-            self.symbolBrush[node["index"]] = node["color"]           
-            self.track_data._reset_node(node['node_id'])
+            self.symbolBrush[node["index"]] = node["color"]
+            self.track_data._reset_node(node["node_id"])
 
         self.g.setData(
             pos=self.pos,
@@ -164,5 +165,32 @@ class TreeWidget(QWidget):
             size=self.size,
             pen=self.pen,
         )
-        self.selected_nodes.reset()
 
+    def _update_display(self, visible: list[str] | str):
+        """Set visibility of selected nodes"""
+
+        if visible == "all":
+            self.symbolBrush[:, 3] = 255
+            self.pen[:, 3] = 255
+
+        else:
+            indices = self.track_data.df[
+                self.track_data.df["node_id"].isin(visible)
+            ]["index"].tolist()
+            self.symbolBrush[:, 3] = 0
+            self.symbolBrush[indices, 3] = 255
+            mask = np.isin(self.adj[:, 0], indices) | np.isin(
+                self.adj[:, 1], indices
+            )
+            adj_indices = np.where(mask)[0]
+            self.pen[:, 3] = 0
+            self.pen[adj_indices, 3] = 255
+
+        self.g.setData(
+            pos=self.pos,
+            adj=self.adj,
+            symbol=self.symbols,
+            symbolBrush=self.symbolBrush,
+            size=self.size,
+            pen=self.pen,
+        )

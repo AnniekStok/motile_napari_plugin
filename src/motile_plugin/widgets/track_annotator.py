@@ -3,10 +3,10 @@ from typing import List, Tuple
 
 import napari.layers
 import networkx as nx
-import numpy as np
 from qtpy.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ..utils.node_selection import NodeSelectionList
+from ..utils.point_tracker import PointTracker
 from ..utils.track_data import TrackData
 from ..utils.tree_widget_utils import (
     bind_key_with_condition,
@@ -18,11 +18,11 @@ from ..utils.tree_widget_utils import (
     get_existing_pins,
 )
 from .custom_table_widget import TableWidget
-from .edit_button_widget import AnnotationButtons
 from .display_mode_selection_widget import SelectMode
+from .edit_button_widget import AnnotationButtons
 from .tree_widget import TreeWidget
 from .volume_mode_widget import VolumeModeWidget
-from ..utils.point_tracker import PointTracker
+
 
 class TrackAnnotationWidget(QWidget):
     """Widget for interactive annotation of tracking results.
@@ -32,6 +32,7 @@ class TrackAnnotationWidget(QWidget):
     def __init__(self, viewer):
         super().__init__()
 
+        self.count = 0
         # initialize lists for tracking node selection, and markings for division points (forks) and endpoints
         self.viewer = viewer
         self.viewer.dims.events.current_step.connect(self._check_dim_changed)
@@ -52,8 +53,18 @@ class TrackAnnotationWidget(QWidget):
 
         # construct tree widget and buttons that reactively respond to changes in the selection of nodes
         self.tree_widget = TreeWidget(self.selected_nodes, self.track_data)
+
+        # add widget for selecting the display mode
         self.mode_widget = SelectMode()
-        self.mode_widget.mode_updated.connect(self._update_mode)
+        self.mode_widget.display_updated.connect(
+            self._highlight_selected_nodes
+        )
+        self.mode_widget.reset_display.connect(self._reset_display)
+
+        @viewer.bind_key("T")
+        def select_next(viewer):
+            self.mode_widget._select_next_display_option()
+
         self.edit_buttons = AnnotationButtons(self.selected_nodes)
         self.edit_buttons.node_edit.connect(self.tree_widget._edit_node)
         self.edit_buttons.edge_edit.connect(self._edit_edge)
@@ -112,6 +123,9 @@ class TrackAnnotationWidget(QWidget):
     def _set_current_step(self) -> None:
         """Adjust the current_step of the viewer to jump to the last item of the selected_nodes list"""
 
+        self.viewer.dims.events.current_step.disconnect(
+            self._check_dim_changed
+        )  # disconnect listening to this event to prevent double call to display update
         if len(self.selected_nodes) > 0:
             node = self.selected_nodes[-1]
 
@@ -131,18 +145,16 @@ class TrackAnnotationWidget(QWidget):
                 self.volume_viewer._set_plane_value(
                     pos=(int(z), int(node["y"]), int(node["x"]))
                 )
+        self.viewer.dims.events.current_step.connect(self._check_dim_changed)
 
     def _check_dim_changed(self) -> None:
-        """Checks if the time dimensions was updated, and if so, call the _highlight_selected_nodes fucntion"""
+        """Checks if the time dimensions was updated, and if so, call the _highlight_selected_nodes function"""
 
-        if self.viewer.dims.last_used == 0 and self.mode == "selection":
+        if self.viewer.dims.last_used == 0 and self.mode in [
+            "selection",
+            "edits",
+        ]:
             self._highlight_selected_nodes()
-
-    def _update_mode(self, mode: str) -> None:
-        """Update the display mode of the selected_labels layer"""
-
-        self.mode = mode
-        self._highlight_selected_nodes()
 
     def _set_selected_node(self) -> None:
         """Make the selected node the active label in self.labels"""
@@ -152,91 +164,104 @@ class TrackAnnotationWidget(QWidget):
         else:
             self.labels.selected_label = 0
 
+    def _reset_display(self) -> None:
+        """Resets the display back to 'all'"""
+
+        if not self.mode_widget.tree_widget_ch.isChecked():
+            self.tree_widget._update_display(visible="all")
+        if not self.mode_widget.labels_ch.isChecked():
+            self.selected_labels_layer.colormap = self.base_label_colormap
+        if not self.mode_widget.points_ch.isChecked():
+            self.point_tracker._update_display(visible="all")
+
     def _highlight_selected_nodes(self) -> None:
         """Highlights labels in the selected_labels layer by changing the opacity"""
 
-        if self.base_label_color_dict is not None:
+        self.count += 1
+        index = self.mode_widget.selection_combo.currentIndex()
+        if index == 0:
+            self.mode = "selection"
+        elif index == 1:
+            self.mode = "track"
+        elif index == 2:
+            self.mode = "lineage"
+        else:
+            self.mode = "edits"
+
+        if any(
+            (
+                self.mode_widget.tree_widget_ch.isChecked(),
+                self.mode_widget.labels_ch.isChecked(),
+                self.mode_widget.points_ch.isChecked(),
+            )
+        ):
             if self.mode == "selection":
-                t = self.viewer.dims.current_step[0]
-                nodes = [
-                    node for node in self.selected_nodes if node["t"] == t
-                ]
-                visible = [node["track_id"] for node in nodes]
+                visible = [node["node_id"] for node in self.selected_nodes]
             elif self.mode == "track":
-                visible = [self.labels.selected_label]
-            elif self.mode == "lineage":
-                node_id = self.track_data.df.loc[
-                    self.track_data.df["track_id"] == self.labels.selected_label,
-                    "node_id",
-                ].iloc[0]
-                lineage_nodes = extract_lineage_tree(self.tracks, node_id)
-                visible = self.track_data.df[
-                    self.track_data.df["node_id"].isin(lineage_nodes)
-                ]["track_id"].unique()
-            else:
-                if self.volume_viewer is not None:
-                    if self.volume_viewer.mode == "plane":
-                        if self.volume_viewer.z_plane_btn.isChecked():
-                            slider_position = (
-                                self.volume_viewer.z_plane_slider.value()
-                            )
-                            visible = np.unique(
-                                self.labels.data[
-                                    self.viewer.dims.current_step[0],
-                                    slider_position,
-                                    :,
-                                    :,
-                                ]
-                            )
-
-                        elif self.volume_viewer.y_plane_btn.isChecked():
-                            slider_position = (
-                                self.volume_viewer.y_plane_slider.value()
-                            )
-                            visible = np.unique(
-                                self.labels.data[
-                                    self.viewer.dims.current_step[0],
-                                    :,
-                                    slider_position,
-                                    :,
-                                ]
-                            )
-
-                        elif self.volume_viewer.x_plane_btn.isChecked():
-                            slider_position = (
-                                self.volume_viewer.x_plane_slider.value()
-                            )
-                            visible = np.unique(
-                                self.labels.data[
-                                    self.viewer.dims.current_step[0],
-                                    :,
-                                    :,
-                                    slider_position,
-                                ]
-                            )
-                    else:
-                        visible = np.unique(
-                            self.labels.data[self.viewer.dims.current_step[0]]
+                nodes = [node["node_id"] for node in self.selected_nodes]
+                if len(nodes) > 0:
+                    visible = self.track_data.df[
+                        (
+                            self.track_data.df["track_id"]
+                            == nodes[0]["track_id"]
                         )
-                else:
-                    visible = np.unique(
-                        self.labels.data[self.viewer.dims.current_step[0]]
-                    )
+                    ][
+                        "node_id"
+                    ].tolist()  # take all the node_ids that have the same track_id as the first node from the selected nodes
+            elif self.mode == "lineage":
+                nodes = [node["node_id"] for node in self.selected_nodes]
+                if len(nodes) > 0:
+                    visible = extract_lineage_tree(self.tracks, nodes[0])
+            else:
+                visible = self.track_data.df[self.track_data.df["annotated"]][
+                    "node_id"
+                ].tolist()
+                for pin in self._get_pins():
+                    visible.append(pin[0])
+                    visible.append(pin[1])
 
+            # find out which widgets/layers to change the display for
+            if self.mode_widget.tree_widget_ch.isChecked():
+                self.tree_widget._update_display(visible)
+            if self.mode_widget.labels_ch.isChecked():
+                self._set_label_colormap(visible)
+            if self.mode_widget.points_ch.isChecked():
+                self.point_tracker._update_display(visible)
+
+    def _set_label_colormap(self, visible):
+        """updates the colormap of the selected_labels_layer based on the current selection"""
+
+        if self.mode == "selection" or self.mode == "edits":
+            # first check if the nodes in 'visible' are in the current time point
+            t = self.viewer.dims.current_step[0]
+            track_ids = self.track_data.df[
+                self.track_data.df["node_id"].isin(visible)
+                & (self.track_data.df["t"] == t)
+            ]["track_id"].tolist()
+        else:
+            track_ids = self.track_data.df[
+                self.track_data.df["node_id"].isin(visible)
+            ]["track_id"].tolist()
+
+        # colormap can only be adjusted for label values, not for individual objects. Therefore, change the colormap depending on the time point as well.
+        if self.base_label_color_dict is not None:
             colormap = create_selection_label_cmap(
-                self.base_label_color_dict, visible=visible
+                self.base_label_color_dict, visible=track_ids
             )
             self.selected_labels_layer.colormap = colormap
-            self.selected_labels_layer.editable = False
-            self.selected_labels_layer.mouse_pan = False
-            self.selected_labels_layer.mouse_zoom = False
-            self.selected_labels_layer.opacity = 0.9
+
+        self.selected_labels_layer.editable = False
+        self.selected_labels_layer.mouse_pan = False
+        self.selected_labels_layer.mouse_zoom = False
+        self.selected_labels_layer.opacity = 0.9
 
     def _on_table_clicked(self, value: str) -> None:
         """Jump to the node selected by the user in the table"""
 
         if value not in ["Add", "Break"]:
-            node_df = self.track_data.df[self.track_data.df["node_id"] == value]
+            node_df = self.track_data.df[
+                self.track_data.df["node_id"] == value
+            ]
             if not node_df.empty:
                 node = node_df.iloc[
                     0
@@ -246,7 +271,7 @@ class TrackAnnotationWidget(QWidget):
     def _user_update(self, node_id: str, edit: str):
         """Forward the user edit to the points layer"""
 
-        if self.point_tracker is not None: 
+        if self.point_tracker is not None:
             self.point_tracker._user_update(node_id, edit)
 
     def _edit_edge(self, edit: str) -> None:
@@ -288,8 +313,11 @@ class TrackAnnotationWidget(QWidget):
         self.labels = labels
         self.labels.opacity = 0.6
         self.base_label_color_dict = create_label_color_dict(
-            labels=self.track_data.df["track_id"].unique(), labels_layer=self.labels
+            labels=self.track_data.df["track_id"].unique(),
+            labels_layer=self.labels,
         )
+
+        self.base_label_colormap = self.labels.colormap
 
         # update the tracks_layer with the same colors as the labels layer
         self.tracks_layer = tracks_layer
@@ -303,7 +331,7 @@ class TrackAnnotationWidget(QWidget):
         if self.selected_labels_layer is not None:
             self.viewer.layers.remove(self.selected_labels_layer)
         self.selected_labels_layer = self.viewer.add_labels(
-            self.labels.data, name="Selected Labels"
+            self.labels.data, name="Highlighted Labels"
         )
         self.selected_labels_layer.editable = False
         self.selected_labels_layer.mouse_pan = False
@@ -311,9 +339,11 @@ class TrackAnnotationWidget(QWidget):
         self.selected_labels_layer.opacity = 0.9
 
         # initiate point tracker
-        if self.point_tracker is None: 
-            self.point_tracker = PointTracker(self.track_data, self.selected_nodes, self.viewer)
-        else: 
+        if self.point_tracker is None:
+            self.point_tracker = PointTracker(
+                self.track_data, self.selected_nodes, self.viewer
+            )
+        else:
             self.point_tracker._update()
 
         # If the data is 3D (+time), add a points layer and 3D plane view option. Points have to be used for selections,
@@ -349,35 +379,34 @@ class TrackAnnotationWidget(QWidget):
                     self.selected_labels_layer,
                     self.selected_nodes,
                 )
-        else:
 
-            # add callback to clicking directly on the labels layer to select cells in the pyqtgraph
-            @self.labels.mouse_drag_callbacks.append
-            def click(layer, event):
-                if (
-                    event.type == "mouse_press"
-                ):  # Check if the event is a mouse press event
-                    position = event.position
-                    value = layer.get_value(
-                        position,
-                        view_direction=event.view_direction,
-                        dims_displayed=event.dims_displayed,
-                        world=True,
-                    )
+        # add callback to clicking directly on the labels layer to select cells in the pyqtgraph
+        @self.labels.mouse_drag_callbacks.append
+        def click(layer, event):
+            if event.type == "mouse_press" and not (
+                self.viewer.dims.ndisplay == 3 and layer.depiction == "plane"
+            ):  # Check if the event is a mouse press event and do not fire in 3D plane mode because this may select invisible objects on top
+                position = event.position
+                value = layer.get_value(
+                    position,
+                    view_direction=event.view_direction,
+                    dims_displayed=event.dims_displayed,
+                    world=True,
+                )
 
-                    if value is not None:
-                        node_df = self.track_data.df[
-                            (self.track_data.df["t"] == int(position[0]))
-                            & (self.track_data.df["track_id"] == int(value))
-                        ]
-                        if not node_df.empty:
-                            node = node_df.iloc[
-                                0
-                            ].to_dict()  # Convert the filtered result to a dictionary
-                            self.selected_nodes.append(node, event.modifiers)
+                if value is not None:
+                    node_df = self.track_data.df[
+                        (self.track_data.df["t"] == int(position[0]))
+                        & (self.track_data.df["track_id"] == int(value))
+                    ]
+                    if not node_df.empty:
+                        node = node_df.iloc[
+                            0
+                        ].to_dict()  # Convert the filtered result to a dictionary
+                        self.selected_nodes.append(node, event.modifiers)
 
-            self.viewer.layers.selection.clear()
-            self.viewer.layers.selection.add(self.labels)
+        self.viewer.layers.selection.clear()
+        self.viewer.layers.selection.add(self.labels)
 
         # Add key bindings for faster annotation
         bind_key_with_condition(
@@ -415,9 +444,15 @@ class TrackAnnotationWidget(QWidget):
         """Extract the node_ids that have a fork or endpoint annotation"""
 
         if not self.track_data.df.empty:
-            forks = self.track_data.df[(self.track_data.df['state'] == 'fork') & (self.track_data.df['annotated'] == True)]['node_id'].tolist()
-            endpoints = self.track_data.df[(self.track_data.df['state'] == 'endpoint') & (self.track_data.df['annotated'] == True)]['node_id'].tolist()
-        else: 
+            forks = self.track_data.df[
+                (self.track_data.df["state"] == "fork")
+                & (self.track_data.df["annotated"])
+            ]["node_id"].tolist()
+            endpoints = self.track_data.df[
+                (self.track_data.df["state"] == "endpoint")
+                & (self.track_data.df["annotated"])
+            ]["node_id"].tolist()
+        else:
             forks = []
             endpoints = []
 

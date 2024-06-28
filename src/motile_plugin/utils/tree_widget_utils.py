@@ -63,23 +63,23 @@ def extract_sorted_tracks(
             node_data = solution_nx_graph.nodes[node]
             pos = node_data[NodeAttr.POS.value]
             annotated = False
-            if node in parent_nodes: 
-                state = 'fork' # can we change this to NodeAttr.STATE.value or equivalent? 
-                symbol = "triangle_down"
-            elif node in end_nodes: 
-                state = 'endpoint' # can we change this to NodeAttr.STATE.value or equivalent? 
+            if node in parent_nodes:
+                state = "fork"  # can we change this to NodeAttr.STATE.value or equivalent?
+                symbol = "triangle_up"
+            elif node in end_nodes:
+                state = "endpoint"  # can we change this to NodeAttr.STATE.value or equivalent?
                 symbol = "x"
             else:
-                state = 'intermittent'
+                state = "intermittent"
                 symbol = "disc"
-            
+
             # also check for manual annotations
-            if node_data.get('fork') is True:
-                state = 'fork' # can we change this to NodeAttr.STATE.value or equivalent? 
-                symbol = "triangle_down"
+            if node_data.get("fork") is True:
+                state = "fork"  # can we change this to NodeAttr.STATE.value or equivalent?
+                symbol = "triangle_up"
                 annotated = True
-            if node_data.get('endpoint') is True:
-                state = 'endpoint' # can we change this to NodeAttr.STATE.value or equivalent? 
+            if node_data.get("endpoint") is True:
+                state = "endpoint"  # can we change this to NodeAttr.STATE.value or equivalent?
                 symbol = "x"
                 annotated = True
 
@@ -95,7 +95,6 @@ def extract_sorted_tracks(
                 "parent_track_id": 0,
                 "state": state,
                 "symbol": symbol,
-                "selected": True,
                 "annotated": annotated,
             }
 
@@ -190,6 +189,7 @@ def get_existing_pins(solution_nx_graph: nx.DiGraph) -> List[Tuple[str, str]]:
             pinned_edges.append((u, v))
 
     return pinned_edges
+
 
 def bind_key_with_condition(
     viewer: Viewer,
@@ -309,7 +309,7 @@ def create_selection_label_cmap(
     return DirectLabelColormap(color_dict=color_dict_rgb_temp)
 
 
-def extract_lineage_tree(graph: nx.DiGraph, node_id: str) -> List:
+def extract_lineage_tree(graph: nx.DiGraph, node_id: str) -> List[str]:
     """Extract the entire lineage tree including horizontal relations for a given node"""
 
     # go up the tree to identify the root node
