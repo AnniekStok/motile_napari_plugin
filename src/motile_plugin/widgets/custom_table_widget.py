@@ -36,6 +36,7 @@ class TableWidget(QWidget):
         self.layout().addWidget(self._view)
 
         self.set_content()
+        self.setMaximumWidth(220)
 
     def _add_row(self, new_row: dict):
         """Add a new row to the table"""

@@ -7,6 +7,7 @@ from napari.layers import Labels, Tracks
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
     QLabel,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +24,7 @@ from .track_annotator import TrackAnnotationWidget
 logger = logging.getLogger(__name__)
 
 
-class MotileWidget(QWidget):
+class MotileWidget(QScrollArea):
     """The main widget for the motile napari plugin. Coordinates sub-widgets
     and calls the back-end motile solver.
     """
@@ -57,13 +58,16 @@ class MotileWidget(QWidget):
         self.run_list_widget = RunsList()
         self.run_list_widget.view_run.connect(self.view_run_napari)
 
-        # Create main layout
+        # Create main layout and main widget, to be added to the scroll area to have resizing capability
         main_layout = QVBoxLayout()
         main_layout.addWidget(self._title_widget())
         main_layout.addWidget(self.view_run_widget)
         main_layout.addWidget(self.edit_run_widget)
         main_layout.addWidget(self.run_list_widget)
-        self.setLayout(main_layout)
+        main_widget = QWidget()
+        main_widget.setLayout(main_layout)
+        self.setWidget(main_widget)
+        self.setWidgetResizable(True)
 
     def remove_napari_layers(self) -> None:
         """Remove the currently stored layers from the napari viewer, if present"""

@@ -60,6 +60,7 @@ class AnnotationButtons(QWidget):
         button_layout.addWidget(edge_box)
 
         self.setLayout(button_layout)
+        self.setMinimumHeight(270)
 
     def _update_buttons(self) -> None:
         """Enable/disable the buttons depending on the current selection and when connections between selected nodes are possible/impossible"""

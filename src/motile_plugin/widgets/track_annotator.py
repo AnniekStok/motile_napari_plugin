@@ -3,7 +3,8 @@ from typing import List, Tuple
 
 import napari.layers
 import networkx as nx
-from qtpy.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PyQt5.QtCore import Qt
+from qtpy.QtWidgets import QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from ..utils.node_selection import NodeSelectionList
 from ..utils.point_tracker import PointTracker
@@ -69,11 +70,17 @@ class TrackAnnotationWidget(QWidget):
         self.edit_buttons.node_edit.connect(self.tree_widget._edit_node)
         self.edit_buttons.edge_edit.connect(self._edit_edge)
 
+        mode_button_scroll_area = QScrollArea()
         mode_button_layout = QVBoxLayout()
         mode_button_layout.addWidget(self.mode_widget)
         mode_button_layout.addWidget(self.edit_buttons)
+        mode_button_widget = QWidget()
+        mode_button_widget.setLayout(mode_button_layout)
+        mode_button_scroll_area.setWidget(mode_button_widget)
+        mode_button_scroll_area.setMaximumWidth(230)
 
         # Add a table widget to keep accumulate actions before triggering the solver
+        table_scroll_area = QScrollArea()
         self.table_widget = TableWidget(
             data={
                 "Source": [],
@@ -84,8 +91,10 @@ class TrackAnnotationWidget(QWidget):
             },
             displayed_columns=["Source", "Target", "Action"],
         )
-        self.table_widget.setMaximumWidth(200)
         self.table_widget.valueClicked.connect(self._on_table_clicked)
+        table_scroll_area.setWidget(self.table_widget)
+        table_scroll_area.setMaximumWidth(180)
+        table_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         # For highlighting selected labels
         self.selected_labels_layer = None
@@ -95,10 +104,11 @@ class TrackAnnotationWidget(QWidget):
 
         # Add widgets to layout
         self.layout = QHBoxLayout()
-        self.layout.addLayout(mode_button_layout)
+        self.layout.addWidget(mode_button_scroll_area)
         self.layout.addWidget(self.tree_widget)
-        self.layout.addWidget(self.table_widget)
+        self.layout.addWidget(table_scroll_area)
         self.setLayout(self.layout)
+        self.setMinimumHeight(300)
 
     def _get_pins(self) -> List[Tuple[str, str, bool]]:
         """Extracts the edge edits ('Add', 'Break') from the table, to be used to pin edges as True or False"""
@@ -195,15 +205,15 @@ class TrackAnnotationWidget(QWidget):
                 self.mode_widget.points_ch.isChecked(),
             )
         ):
+            visible = []
             if self.mode == "selection":
                 visible = [node["node_id"] for node in self.selected_nodes]
             elif self.mode == "track":
-                nodes = [node["node_id"] for node in self.selected_nodes]
-                if len(nodes) > 0:
+                if len(self.selected_nodes) > 0:
                     visible = self.track_data.df[
                         (
                             self.track_data.df["track_id"]
-                            == nodes[0]["track_id"]
+                            == self.selected_nodes[0]["track_id"]
                         )
                     ][
                         "node_id"
